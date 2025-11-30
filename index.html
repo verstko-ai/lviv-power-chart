@@ -1,3 +1,32 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <title>Графік відключень електроенергії</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background: #fafafa;
+        }
+        h1 {
+            margin-bottom: 5px;
+        }
+        #chart {
+            width: 100%;
+            max-width: 1400px;
+            height: 800px;
+        }
+    </style>
+</head>
+<body>
+
+<h1>Графік погодинних відключень на 30.11.2025</h1>
+<p><b>Оновлено: 07:17 30.11.2025</b></p>
+
+<div id="chart"></div>
+
 <script>
 // Новий графік відключень
 const outages = {
@@ -21,18 +50,26 @@ function toMinutes(t) {
     return h * 60 + m;
 }
 
-const COLOR_POWER_ON = "#FFD700"; // жовтий – світло є
-const COLOR_POWER_OFF = "#000000"; // чорний – світла немає
+// Кольори (жовтий = є світло, чорний = немає світла)
+const COLOR_POWER_ON = "#FFD700"; // жовтий
+const COLOR_POWER_OFF = "#000000"; // чорний
+
+// Масив поки лишаємо, але він вже не критичний
+const colors = [
+    "#d62728", "#1f77b4", "#2ca02c", "#9467bd",
+    "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22",
+    "#17becf", "#ff7f0e", "#aec7e8", "#ffbb78"
+];
 
 let groups = Object.keys(outages);
 let traces = [];
 
 // Формування ліній
-groups.forEach(group => {
+groups.forEach((group, i) => {
     const intervals = outages[group];
 
-    // Якщо відключень немає — весь день жовта лінія
     if (intervals.length === 0) {
+        // Група має електроенергію весь день — жовта смуга
         traces.push({
             x: [0, 1440],
             y: [group, group],
@@ -47,11 +84,11 @@ groups.forEach(group => {
 
     let last = 0;
 
-    intervals.forEach(interval => {
+    intervals.forEach((interval) => {
         const start = toMinutes(interval[0]);
         const end = toMinutes(interval[1]);
 
-        // Ділянка зі світлом (жовта)
+        // Проміжок зі світлом (жовтий)
         if (start > last) {
             traces.push({
                 x: [last, start],
@@ -64,7 +101,7 @@ groups.forEach(group => {
             });
         }
 
-        // Відключення (чорна)
+        // Відключення (чорний)
         traces.push({
             x: [start, end],
             y: [group, group],
@@ -78,7 +115,7 @@ groups.forEach(group => {
         last = end;
     });
 
-    // Хвіст дня зі світлом
+    // Кінець дня зі світлом (жовтий)
     if (last < 1440) {
         traces.push({
             x: [last, 1440],
@@ -131,6 +168,10 @@ setInterval(() => {
     });
 }, 60000);
 </script>
+
+</body>
+</html>
+
 
 
 
