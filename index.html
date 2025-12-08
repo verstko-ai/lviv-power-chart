@@ -21,12 +21,12 @@
 const CSV_INFO = "https://docs.google.com/spreadsheets/d/11sNa680oNGIDLCpeUJqkWd0gpxVIFz9gaZuop-hLE_8/export?format=csv&gid=0";
 const CSV_DATA = "https://docs.google.com/spreadsheets/d/11sNa680oNGIDLCpeUJqkWd0gpxVIFz9gaZuop-hLE_8/export?format=csv&gid=1945313917";
 
-const COLOR_POWER_ON = "#FFD700";  // жовтий
+const COLOR_POWER_ON  = "#FFD700"; // жовтий
 const COLOR_POWER_OFF = "#000000"; // чорний
 
 function toMinutes(t) {
-    const [h,m] = t.split(":").map(Number);
-    return h*60 + m;
+    const [h, m] = t.split(":").map(Number);
+    return h * 60 + m;
 }
 
 async function fetchCSV(url) {
@@ -36,13 +36,20 @@ async function fetchCSV(url) {
 }
 
 function parseCSV(text) {
-    return text.trim().split("\n").map(row => row.split(",").map(cell => cell.replace(/^"|"$/g,'').trim()));
+    return text
+        .trim()
+        .split("\n")
+        .map(row =>
+            row
+                .split(",")
+                .map(cell => cell.replace(/^"|"$/g, "").trim())
+        );
 }
 
 async function loadInfo() {
     const csv = await fetchCSV(CSV_INFO);
     const rows = parseCSV(csv);
-    document.getElementById("title").textContent = `Графік погодинних відключень на ${rows[0][1]}`;
+    document.getElementById("title").textContent   = `Графік погодинних відключень на ${rows[0][1]}`;
     document.getElementById("updated").textContent = `Інформація станом на ${rows[1][1]}`;
 }
 
@@ -50,139 +57,153 @@ async function loadChart() {
     const csv = await fetchCSV(CSV_DATA);
     const rows = parseCSV(csv);
 
-    const groups = [];
+    const groups  = [];
     const outages = {};
 
-    for(let i=0;i<rows.length;i++){
-        const group = rows[i][0];
+    // 1. Зчитуємо ВСІ інтервали (якщо їх рознесли по кількох стовпцях – теж зберемо)
+    for (let i = 0; i < rows.length; i++) {
+        const row   = rows[i];
+        const group = row[0];
         groups.push(group);
-        const intervals = rows[i][1].split(",").map(s=>s.trim());
-        outages[group] = intervals.map(interval=>{
-            const [start,end] = interval.split("-").map(s=>s.trim()); // <- виправлено дефіс
-            return [start,end];
+
+        // Беремо всі стовпчики, починаючи з другого, і склеюємо через кому
+        const intervalsRaw = row
+            .slice(1)
+            .join(","); // тепер не важливо, один стовпець з інтервалами чи декілька
+
+        const intervals = intervalsRaw
+            .split(",")
+            .map(s => s.trim())
+            .filter(s => s.length > 0);
+
+        outages[group] = intervals.map(interval => {
+            const [start, end] = interval.split("-").map(s => s.trim());
+            return [start, end];  // ["HH:MM", "HH:MM"]
         });
     }
 
-    const traces = [];
-
-    // NEW: шукаємо максимальний час закінчення всіх інтервалів
+    // 2. Знаходимо глобальний максимум закінчення серед усіх груп
+    const STEP = 5; // прив'язка до 5 хвилин
     let globalMaxEnd = 0;
 
-    groups.forEach(group=>{
+    groups.forEach(group => {
+        outages[group].forEach(([startStr, endStr]) => {
+            const end = toMinutes(endStr);
+            if (end > globalMaxEnd) globalMaxEnd = end;
+        });
+    });
+
+    // Якщо раптом даних немає – страхуємось 24 годинами
+    if (globalMaxEnd === 0) {
+        globalMaxEnd = 1440;
+    }
+
+    // Округляємо вгору до найближчих 5 хвилин
+    const maxX = Math.ceil(globalMaxEnd / STEP) * STEP;
+
+    const traces = [];
+
+    // 3. Будуємо трейси
+    groups.forEach(group => {
         let last = 0;
         const intervals = outages[group];
 
-        intervals.forEach(interval=>{
-            const start = toMinutes(interval[0]);
-            const end = toMinutes(interval[1]);
+        intervals.forEach(([startStr, endStr]) => {
+            const start = toMinutes(startStr);
+            const end   = toMinutes(endStr);
 
-            if(end > globalMaxEnd) {          // NEW
-                globalMaxEnd = end;           // NEW
-            }                                  // NEW
-
-            if(start>last){
+            // Ділянка з електрикою ДО відключення
+            if (start > last) {
                 traces.push({
-                    x:[last,start],
-                    y:[group,group],
-                    mode:"lines",
-                    line:{width:18,color:COLOR_POWER_ON},
-                    hoverinfo:"text",
-                    text:`${group}: Електроенергія є`,
-                    showlegend:false
+                    x: [last, start],
+                    y: [group, group],
+                    mode: "lines",
+                    line: { width: 18, color: COLOR_POWER_ON },
+                    hoverinfo: "text",
+                    text: `${group}: Електроенергія є`,
+                    showlegend: false
                 });
             }
 
+            // Власне відключення
             traces.push({
-                x:[start,end],
-                y:[group,group],
-                mode:"lines",
-                line:{width:18,color:COLOR_POWER_OFF},
-                hoverinfo:"text",
-                text:`${group}: Відключення ${interval[0]}–${interval[1]}`,
-                showlegend:false
+                x: [start, end],
+                y: [group, group],
+                mode: "lines",
+                line: { width: 18, color: COLOR_POWER_OFF },
+                hoverinfo: "text",
+                text: `${group}: Відключення ${startStr}–${endStr}`,
+                showlegend: false
             });
 
-            last=end;
+            last = end;
         });
 
-        // "хвіст" з електрикою після останнього відключення — до globalMaxEnd, а не до 1440
-        // остаточне значення maxX порахуємо нижче
-    });
-
-    // NEW: прив’язка до 5 хв. і розрахунок кінцевого діапазону
-    const STEP = 5; // хвилин
-    // якщо з якоїсь причини немає даних, страхуємося 1440
-    let maxX = globalMaxEnd > 0 ? Math.ceil(globalMaxEnd / STEP) * STEP : 1440;
-
-    // тепер додаємо "хвіст" з електрикою вже з урахуванням maxX
-    groups.forEach(group=>{
-        let last = 0;
-        const intervals = outages[group];
-
-        intervals.forEach(interval=>{
-            const start = toMinutes(interval[0]);
-            const end = toMinutes(interval[1]);
-            last = end; // останній кінець в цій групі
-        });
-
-        if(last < maxX){
+        // "Хвіст" з електрикою після останнього відключення – до maxX
+        if (last < maxX) {
             traces.push({
-                x:[last,maxX],
-                y:[group,group],
-                mode:"lines",
-                line:{width:18,color:COLOR_POWER_ON},
-                hoverinfo:"text",
-                text:`${group}: Електроенергія є`,
-                showlegend:false
+                x: [last, maxX],
+                y: [group, group],
+                mode: "lines",
+                line: { width: 18, color: COLOR_POWER_ON },
+                hoverinfo: "text",
+                text: `${group}: Електроенергія є`,
+                showlegend: false
             });
         }
     });
 
-    function getCurrentMinutes(){
-        const now=new Date();
-        return now.getHours()*60 + now.getMinutes();
+    function getCurrentMinutes() {
+        const now = new Date();
+        return now.getHours() * 60 + now.getMinutes();
     }
 
-    // NEW: години на осі X — до останньої заповненої години
-    const maxHour = Math.ceil(maxX / 60);
-    const tickvals = Array.from({length:maxHour+1},(_,i)=>i*60);
-    const ticktext = Array.from({length:maxHour+1},(_,i)=>`${i}:00`);
+    // 4. Налаштування осі X та червоної лінії "зараз"
+    const maxHour  = Math.ceil(maxX / 60);
+    const tickvals = Array.from({ length: maxHour + 1 }, (_, i) => i * 60);
+    const ticktext = Array.from({ length: maxHour + 1 }, (_, i) =>
+        `${i.toString().padStart(2, "0")}:00`
+    );
 
-    const currentInitial = Math.min(getCurrentMinutes(), maxX); // NEW: щоб червона лінія не вилітала вправо
+    const currentInitial = Math.min(getCurrentMinutes(), maxX);
 
     const layout = {
-        showlegend:false,
-        xaxis:{
-            title:"Час",
-            range:[0,maxX],             // NEW: замість [0,1440]
-            tickvals:tickvals,
-            ticktext:ticktext
+        showlegend: false,
+        xaxis: {
+            title: "Час",
+            range: [0, maxX],
+            tickvals: tickvals,
+            ticktext: ticktext
         },
-        yaxis:{
-            title:"Групи",
+        yaxis: {
+            title: "Групи",
             type: "category",
             categoryorder: "array",
             categoryarray: groups
         },
-        shapes:[{
-            type:"line",
-            x0:currentInitial,          // NEW
-            x1:currentInitial,          // NEW
-            y0:-1,
-            y1:groups.length,
-            line:{color:"red",width:2,dash:"dash"}
+        shapes: [{
+            type: "line",
+            x0: currentInitial,
+            x1: currentInitial,
+            y0: -1,
+            y1: groups.length,
+            line: { color: "red", width: 2, dash: "dash" }
         }]
     };
 
-    Plotly.newPlot("chart",traces,layout);
+    Plotly.newPlot("chart", traces, layout);
 
-    setInterval(()=>{
-        const current = Math.min(getCurrentMinutes(), maxX); // NEW
-        Plotly.relayout("chart",{"shapes[0].x0":current,"shapes[0].x1":current});
-    },60000);
+    // 5. Оновлення червоної лінії раз на хвилину (але не далі maxX)
+    setInterval(() => {
+        const current = Math.min(getCurrentMinutes(), maxX);
+        Plotly.relayout("chart", {
+            "shapes[0].x0": current,
+            "shapes[0].x1": current
+        });
+    }, 60000);
 }
 
-async function init(){
+async function init() {
     await loadInfo();
     await loadChart();
 }
