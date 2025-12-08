@@ -2,7 +2,7 @@
 <html lang="uk">
 <head>
 <meta charset="UTF-8">
-<title>Графік відключень електроенергії (5-хвилинні слоти)</title>
+<title>Графік відключень електроенергії (Фінальна Корекція 24:00)</title>
 <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
 <style>
     body { font-family: Arial, sans-serif; margin: 20px; background: #fafafa; }
@@ -21,26 +21,21 @@
 const CSV_INFO = "https://docs.google.com/spreadsheets/d/11sNa680oNGIDLCpeUJqkWd0gpxVIFz9gaZuop-hLE_8/export?format=csv&gid=0";
 const CSV_DATA = "https://docs.google.com/spreadsheets/d/11sNa680oNGIDLCpeUJqkWd0gpxVIFz9gaZuop-hLE_8/export?format=csv&gid=1945313917";
 
-const COLOR_POWER_ON = "#FFD700";
-const COLOR_POWER_OFF = "#000000";
-
-// *** НОВА КОНСТАНТА: Кількість хвилин в одному слоті ***
+const COLOR_POWER_ON = "#FFD700"; // Жовтий (можна змінити на #fafafa, якщо не потрібен)
+const COLOR_POWER_OFF = "#000000"; // Чорний
 const SLOT_DURATION = 5;
-// *** НОВА КОНСТАНТА: Максимальна кількість слотів (1440 / 5 = 288) ***
 const MAX_SLOTS = 1440 / SLOT_DURATION; 
-const MIN_SLOT_OFFSET = 0.001; // Невеликий зсув для коректного відображення 24:00
+const MIN_SLOT_OFFSET = 0.001; 
 
-// Конвертує HH:MM у кількість 5-хвилинних слотів (0 - 288)
 function toSlots(t) {
     if (t === "24:00" || t === "00:00 (end)") { 
-        return MAX_SLOTS; // 288 слотів
+        return MAX_SLOTS;
     }
     const [h,m] = t.split(":").map(Number);
     const minutes = h*60 + m;
     return Math.round(minutes / SLOT_DURATION); 
 }
 
-// Конвертує кількість слотів у рядок часу HH:MM (для hover)
 function slotsToTimeStr(slots) {
     const minutes = slots * SLOT_DURATION;
     if (minutes >= 1440) return "24:00";
@@ -57,13 +52,12 @@ async function fetchCSV(url) {
     return new TextDecoder("utf-8").decode(buffer);
 }
 
-// Коректний парсинг CSV
 function parseCSV(text) {
     return text.trim().split("\n");
 }
 
 async function loadInfo() {
-    const csv = await fetchCSV(CSV_INFO);
+    const csv = await fetchCSV(CSV_INFO);
     const rows = parseCSV(csv);
     const infoRow = rows[0].split(",").map(cell => cell.replace(/^"|"$/g,'').trim());
     const updatedRow = rows[1].split(",").map(cell => cell.replace(/^"|"$/g,'').trim());
@@ -79,7 +73,6 @@ async function loadChart() {
     const groups = [];
     const outages = {};
     
-    // Надійний парсинг двох колонок
     rows.forEach(row => {
         const firstCommaIndex = row.indexOf(',');
         if (firstCommaIndex === -1) return;
@@ -103,77 +96,108 @@ async function loadChart() {
             return [start,end]; 
         });
     });
+    
+    if (groups.length === 0) {
+        document.getElementById("chart").innerHTML = "<div>Помилка: Не знайдено жодної групи даних. Перевірте формат CSV.</div>";
+        return;
+    }
 
-    const traces = [];
+    const traces = [];
 
-    groups.forEach(group=>{
-        let lastSlot = 0;
-        const intervals = outages[group];
+    groups.forEach(group=>{
+        let lastSlot = 0;
+        const intervals = outages[group];
+        let lastIntervalEndsAt24 = false;
 
-        intervals.forEach(interval=>{
-            const startStr = interval[0];
+        intervals.forEach(interval=>{
+            const startStr = interval[0];
             const endStr = interval[1];
             
-            const startSlot = toSlots(startStr);
-            let endSlot = toSlots(endStr);
+            const startSlot = toSlots(startStr);
+            let endSlot = toSlots(endStr);
             
-            // Запобігання помилкам, якщо інтервал невалідний
             if (startSlot >= endSlot && endSlot !== MAX_SLOTS) return;
+            
+            // Якщо це останній інтервал, і він закінчується о 24:00, позначаємо
+            if (endSlot === MAX_SLOTS) {
+                lastIntervalEndsAt24 = true;
+            }
 
-            // Світло є (жовта смуга)
-            if(startSlot > lastSlot){
-                traces.push({
-                    x:[lastSlot,startSlot],
-                    y:[group,group],
-                    mode:"lines",
-                    line:{width:18,color:COLOR_POWER_ON},
-                    hoverinfo:"text",
-                    text:`${group}: Електроенергія є ${slotsToTimeStr(lastSlot)}–${startStr}`,
-                    showlegend:false
-                });
-            }
+            // 1. Світло є (жовта смуга)
+            if(startSlot > lastSlot){
+                traces.push({
+                    x:[lastSlot,startSlot],
+                    y:[group,group],
+                    mode:"lines",
+                    line:{width:18,color:COLOR_POWER_ON},
+                    hoverinfo:"text",
+                    text:`${group}: Електроенергія є ${slotsToTimeStr(lastSlot)}–${startStr}`,
+                    showlegend:false,
+                    z: 0 
+                });
+            }
 
-            // Відключення (чорна смуга)
-            // Обробка граничної точки 24:00
+            // 2. Відключення (чорна смуга)
+            // Для всіх інтервалів, що закінчуються о 24:00, ми використовуємо MIN_SLOT_OFFSET
             const finalEndSlot = (endSlot === MAX_SLOTS) ? (MAX_SLOTS - MIN_SLOT_OFFSET) : endSlot;
 
-            traces.push({
-                x:[startSlot,finalEndSlot],
-                y:[group,group],
-                mode:"lines",
-                line:{width:18,color:COLOR_POWER_OFF},
-                hoverinfo:"text",
-                text:`${group}: Відключення ${startStr}–${endStr === "24:00" ? "00:00" : endStr}`,
-                showlegend:false
-            });
+            traces.push({
+                x:[startSlot,finalEndSlot],
+                y:[group,group],
+                mode:"lines",
+                line:{width:18,color:COLOR_POWER_OFF},
+                hoverinfo:"text",
+                text:`${group}: Відключення ${startStr}–${endStr === "24:00" ? "00:00" : endStr}`,
+                showlegend:false,
+                z: 1 
+            });
 
-            lastSlot = endSlot;
-        });
+            lastSlot = endSlot;
+        });
 
-        // Світло є до кінця дня (жовта смуга)
-        if(lastSlot < MAX_SLOTS){
-            traces.push({
-                x:[lastSlot,MAX_SLOTS],
-                y:[group,group],
-                mode:"lines",
-                line:{width:18,color:COLOR_POWER_ON},
-                hoverinfo:"text",
-                text:`${group}: Електроенергія є ${slotsToTimeStr(lastSlot)}–24:00`,
-                showlegend:false
-            });
-        }
-    });
+        // *** ФІНАЛЬНЕ ВИПРАВЛЕННЯ (АГРЕСИВНЕ) ***
+        // Якщо останній інтервал групи закінчується рівно о 24:00 (144 слотів),
+        // ми додаємо окрему трасу для заповнення останньої точки (144 - 144.001)
+        if (lastIntervalEndsAt24) {
+            // Визначаємо початок останнього інтервалу
+            const lastStartSlot = toSlots(intervals[intervals.length - 1][0]);
+            
+            traces.push({
+                x:[lastStartSlot, MAX_SLOTS], // Малюємо від початку останнього інтервалу до 144
+                y:[group,group],
+                mode:"lines",
+                line:{width:18,color:COLOR_POWER_OFF},
+                hoverinfo:"text",
+                text:`${group}: Відключення ${slotsToTimeStr(lastStartSlot)}–24:00 (Фінал)`,
+                showlegend:false,
+                z: 2 // Максимальний Z-індекс, щоб перекрити все
+            });
+        }
+        
+        // 3. Світло є до кінця дня (жовта смуга)
+        if(lastSlot < MAX_SLOTS){
+            traces.push({
+                x:[lastSlot,MAX_SLOTS],
+                y:[group,group],
+                mode:"lines",
+                line:{width:18,color:COLOR_POWER_ON},
+                hoverinfo:"text",
+                text:`${group}: Електроенергія є ${slotsToTimeStr(lastSlot)}–24:00`,
+                showlegend:false,
+                z: 0
+            });
+        }
+    });
 
-    function getCurrentSlot(){
-        const now=new Date();
+    function getCurrentSlot(){
+        const now=new Date();
         const minutes = now.getHours()*60 + now.getMinutes() + (now.getSeconds() / 60);
-        return minutes / SLOT_DURATION;
-    }
+        return minutes / SLOT_DURATION;
+    }
     
-    // *** НАЛАШТУВАННЯ ОСІ X (СЛОТИ) ***
-    // Мітки кожну годину (60 хв / 5 хв = 12 слотів)
+    // НАЛАШТУВАННЯ ОСІ X (СЛОТИ)
     const stepsPerHour = 60 / SLOT_DURATION;
-    const tickCount = 25; // 00:00 до 24:00
+    const tickCount = 25; 
     
     const tickVals = Array.from({length: tickCount}, (_, i) => i * stepsPerHour);
     
@@ -183,42 +207,43 @@ async function loadChart() {
         return `${String(hour).padStart(2, '0')}:00`;
     });
 
-    const layout = {
-        showlegend:false,
-        xaxis:{
-            title:"Час",
-            type: "linear",
-            range:[0,MAX_SLOTS], // Діапазон 0 - 288
-            tickvals: tickVals,
-            ticktext: tickText
-        },
-        yaxis:{
-            title:"Групи",
-            type: "category",
-            categoryorder: "array",
-            categoryarray: groups
-        },
-        shapes:[{
-            type:"line",
-            x0:getCurrentSlot(),
-            x1:getCurrentSlot(),
-            y0:-1,
-            y1:groups.length,
-            line:{color:"red",width:2,dash:"dash"}
-        }]
-    };
+    const layout = {
+        showlegend:false,
+        xaxis:{
+            title:"Час",
+            type: "linear",
+            // Межа осі повинна бути 144, щоб мітка 24:00 відображалася коректно
+            range:[0,MAX_SLOTS], 
+            tickvals: tickVals,
+            ticktext: tickText
+        },
+        yaxis:{
+            title:"Групи",
+            type: "category",
+            categoryorder: "array",
+            categoryarray: groups
+        },
+        shapes:[{
+            type:"line",
+            x0:getCurrentSlot(),
+            x1:getCurrentSlot(),
+            y0:-1,
+            y1:groups.length,
+            line:{color:"red",width:2,dash:"dash"}
+        }]
+    };
 
-    Plotly.newPlot("chart",traces,layout);
+    Plotly.newPlot("chart",traces,layout);
 
-    setInterval(()=>{
-        const current=getCurrentSlot();
-        Plotly.relayout("chart",{"shapes[0].x0":current,"shapes[0].x1":current});
-    },10000); // Оновлюємо кожні 10 секунд
+    setInterval(()=>{
+        const current=getCurrentSlot();
+        Plotly.relayout("chart",{"shapes[0].x0":current,"shapes[0].x1":current});
+    },10000); 
 }
 
 async function init(){
-    await loadInfo();
-    await loadChart();
+    await loadInfo();
+    await loadChart();
 }
 
 init();
