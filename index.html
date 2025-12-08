@@ -21,10 +21,9 @@
 const CSV_INFO = "https://docs.google.com/spreadsheets/d/11sNa680oNGIDLCpeUJqkWd0gpxVIFz9gaZuop-hLE_8/export?format=csv&gid=0";
 const CSV_DATA = "https://docs.google.com/spreadsheets/d/11sNa680oNGIDLCpeUJqkWd0gpxVIFz9gaZuop-hLE_8/export?format=csv&gid=1945313917";
 
-const COLOR_POWER_ON  = "#FFD700";
-const COLOR_POWER_OFF = "#000000";
+const COLOR_POWER_ON  = "#FFD700";  // жовтий
+const COLOR_POWER_OFF = "#000000";  // чорний
 
-// HH:MM -> minutes
 function toMinutes(t) {
     const [h, m] = t.split(":").map(Number);
     return h * 60 + m;
@@ -36,15 +35,37 @@ async function fetchCSV(url) {
     return new TextDecoder("utf-8").decode(buffer);
 }
 
+// ✅ НОВИЙ ПРАВИЛЬНИЙ ПАРСЕР CSV З УРАХУВАННЯМ ЛАПОК
 function parseCSV(text) {
-    return text
-        .trim()
-        .split("\n")
-        .map(row =>
-            row
-                .split(",")
-                .map(cell => cell.replace(/^"|"$/g, "").trim())
-        );
+    const lines = text.trim().split("\n");
+    return lines.map(line => {
+        const cells = [];
+        let current = "";
+        let inQuotes = false;
+
+        for (let i = 0; i < line.length; i++) {
+            const c = line[i];
+
+            if (c === '"') {
+                // подвійні лапки "" всередині поля -> одна лапка
+                if (inQuotes && line[i + 1] === '"') {
+                    current += '"';
+                    i++; // пропускаємо другу лапку
+                } else {
+                    inQuotes = !inQuotes;
+                }
+            } else if (c === ',' && !inQuotes) {
+                // кінець клітинки
+                cells.push(current.trim());
+                current = "";
+            } else {
+                current += c;
+            }
+        }
+        cells.push(current.trim());
+
+        return cells.map(cell => cell.replace(/^"|"$/g, "").trim());
+    });
 }
 
 async function loadInfo() {
@@ -61,139 +82,121 @@ async function loadChart() {
     const groups = [];
     const outages = {};
 
-    // КОЖЕН СТОВПЧИК ПІСЛЯ ПЕРШОГО = ОКРЕМИЙ ІНТЕРВАЛ
+    // Беремо назву групи з першого стовпця, інтервали — з другого (як було в тебе спочатку)
     for (let i = 0; i < rows.length; i++) {
-        const row = rows[i];
-        const group = row[0];
+        const group = rows[i][0];
         groups.push(group);
 
-        outages[group] = row
-            .slice(1)
-            .map(v => v.trim())
-            .filter(Boolean)
-            .map(interval => {
-                const [start, end] = interval.split("-").map(s => s.trim());
-                return [start, end];
-            });
-    }
+        const intervalsStr = rows[i][1] || "";
 
-    // РАХУЄМО КІНЕЦЬ ОСІ Х
-    const STEP = 5;
+        // У ЦЬОМУ МІСЦІ тепер rows[i][1] — це вже ЦІЛА клітинка з усіма інтервалами,
+        // навіть якщо в ній були лапки й коми.
+        const intervals = intervalsStr
+            .split(",")
+            .map(s => s.trim())
+            .filter(s => s.length > 0);
 
-    let globalMaxEnd = 0;
-
-    groups.forEach(group => {
-        outages[group].forEach(([_, endStr]) => {
-            const end = toMinutes(endStr);
-            if (end > globalMaxEnd) globalMaxEnd = end;
+        outages[group] = intervals.map(interval => {
+            const [start, end] = interval.split("-").map(s => s.trim());
+            return [start, end];  // ["HH:MM", "HH:MM"]
         });
-    });
-
-    if (globalMaxEnd === 0) globalMaxEnd = 1440;
-
-    const maxX = Math.ceil(globalMaxEnd / STEP) * STEP;
+    }
 
     const traces = [];
 
-    // БУДУЄМО ГРАФІК
+    // Логіка побудови сегментів — така ж, як у твоєму оригінальному коді
     groups.forEach(group => {
         let last = 0;
+        const intervals = outages[group];
 
-        outages[group].forEach(([startStr, endStr]) => {
-            const start = toMinutes(startStr);
-            const end = toMinutes(endStr);
+        intervals.forEach(interval => {
+            const start = toMinutes(interval[0]);
+            const end   = toMinutes(interval[1]);
 
-            // світло
             if (start > last) {
+                // Електроенергія ДО відключення
                 traces.push({
-                    x:[last,start],
-                    y:[group,group],
-                    mode:"lines",
-                    line:{width:18,color:COLOR_POWER_ON},
-                    hoverinfo:"text",
-                    text:`${group}: Електроенергія є`,
-                    showlegend:false
+                    x: [last, start],
+                    y: [group, group],
+                    mode: "lines",
+                    line: { width: 18, color: COLOR_POWER_ON },
+                    hoverinfo: "text",
+                    text: `${group}: Електроенергія є`,
+                    showlegend: false
                 });
             }
 
-            // відключення
+            // ВІДКЛЮЧЕННЯ
             traces.push({
-                x:[start,end],
-                y:[group,group],
-                mode:"lines",
-                line:{width:18,color:COLOR_POWER_OFF},
-                hoverinfo:"text",
-                text:`${group}: Відключення ${startStr}–${endStr}`,
-                showlegend:false
+                x: [start, end],
+                y: [group, group],
+                mode: "lines",
+                line: { width: 18, color: COLOR_POWER_OFF },
+                hoverinfo: "text",
+                text: `${group}: Відключення ${interval[0]}–${interval[1]}`,
+                showlegend: false
             });
 
             last = end;
         });
 
-        // хвіст зі світлом
-        if (last < maxX) {
+        // Хвіст зі світлом до кінця доби
+        if (last < 1440) {
             traces.push({
-                x:[last,maxX],
-                y:[group,group],
-                mode:"lines",
-                line:{width:18,color:COLOR_POWER_ON},
-                hoverinfo:"text",
-                text:`${group}: Електроенергія є`,
-                showlegend:false
+                x: [last, 1440],
+                y: [group, group],
+                mode: "lines",
+                line: { width: 18, color: COLOR_POWER_ON },
+                hoverinfo: "text",
+                text: `${group}: Електроенергія є`,
+                showlegend: false
             });
         }
     });
 
-    function getCurrentMinutes(){
-        const now=new Date();
-        return now.getHours()*60 + now.getMinutes();
+    function getCurrentMinutes() {
+        const now = new Date();
+        return now.getHours() * 60 + now.getMinutes();
     }
 
-    // РОЗМІТКА ОСІ X
-    const maxHour = Math.ceil(maxX/60);
-
-    const tickvals = Array.from({length:maxHour+1},(_,i)=>i*60);
-    const ticktext = Array.from({length:maxHour+1},(_,i)=>`${i.toString().padStart(2,"0")}:00`);
-
-    const currentInitial = Math.min(getCurrentMinutes(), maxX);
-
     const layout = {
-        showlegend:false,
-        xaxis:{
-            title:"Час",
-            range:[0,maxX],
-            tickvals: tickvals,
-            ticktext: ticktext
+        showlegend: false,
+        xaxis: {
+            title: "Час",
+            range: [0, 1440], // поки що лишаємо ПОВНІ 24 години
+            tickvals: Array.from({ length: 25 }, (_, i) => i * 60),
+            ticktext: Array.from({ length: 25 }, (_, i) => `${i}:00`)
         },
-        yaxis:{
-            title:"Групи",
+        yaxis: {
+            title: "Групи",
             type: "category",
             categoryorder: "array",
             categoryarray: groups
         },
-        shapes:[{
-            type:"line",
-            x0:currentInitial,
-            x1:currentInitial,
-            y0:-1,
-            y1:groups.length,
-            line:{color:"red",width:2,dash:"dash"}
+        shapes: [{
+            type: "line",
+            x0: getCurrentMinutes(),
+            x1: getCurrentMinutes(),
+            y0: -1,
+            y1: groups.length,
+            line: { color: "red", width: 2, dash: "dash" }
         }]
     };
 
     Plotly.newPlot("chart", traces, layout);
 
-    // РУХ ЧЕРВОНОЇ ЛІНІЇ
-    setInterval(()=>{
-        const current=Math.min(getCurrentMinutes(),maxX);
-        Plotly.relayout("chart",{
-            "shapes[0].x0":current,
-            "shapes[0].x1":current
+    // Оновлення червоної лінії раз на хвилину
+    setInterval(() => {
+        const current = getCurrentMinutes();
+        const clamped = Math.min(current, 1440);
+        Plotly.relayout("chart", {
+            "shapes[0].x0": clamped,
+            "shapes[0].x1": clamped
         });
-    },60000);
+    }, 60000);
 }
 
-async function init(){
+async function init() {
     await loadInfo();
     await loadChart();
 }
