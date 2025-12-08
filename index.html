@@ -24,16 +24,13 @@ const CSV_DATA = "https://docs.google.com/spreadsheets/d/11sNa680oNGIDLCpeUJqkWd
 const COLOR_POWER_ON = "#FFD700"; // жовтий
 const COLOR_POWER_OFF = "#000000"; // чорний
 
-// *** ВИПРАВЛЕННЯ 1: Функція конвертації часу в хвилини (0-1440) ***
+// *** ФІНАЛЬНА КОРЕКЦІЯ toMinutes ***
 function toMinutes(t) {
-    // Якщо час 24:00 (це має бути лише кінець інтервалу)
+    // Якщо кінець інтервалу був замінений на 24:00
     if (t === "24:00") { 
         return 1440; 
     }
-    // Якщо час 00:00, це має бути 0 хвилин
-    if (t === "00:00") {
-        return 0;
-    }
+    // Стандартний парсинг для HH:MM. 00:00 -> 0 хвилин.
     const [h, m] = t.split(":").map(Number);
     return h * 60 + m;
 }
@@ -79,7 +76,7 @@ async function loadChart() {
         outages[group] = intervals.map(interval=>{
             let [start,end] = interval.split("-").map(s=>s.trim()); 
             
-            // Якщо час закінчення 00:00, ми позначаємо його як 24:00 для внутрішньої логіки та toMinutes.
+            // Якщо час закінчення 00:00, ми позначаємо його як 24:00 для обробки 1440.
             if (end === "00:00") end = "24:00"; 
             
             return [start,end]; 
@@ -99,7 +96,7 @@ async function loadChart() {
             const start = toMinutes(startStr); // Хвилини
             const end = toMinutes(endStr);   // Хвилини
 
-            // *** ВИПРАВЛЕННЯ 2: Перевірка логіки "Світло є" ***
+            // Світло є (від last до start)
             if(start > last){
                 traces.push({
                     x:[last,start],
@@ -107,7 +104,7 @@ async function loadChart() {
                     mode:"lines",
                     line:{width:18,color:COLOR_POWER_ON},
                     hoverinfo:"text",
-                    // Якщо last = 0, показуємо 00:00
+                    // Форматування hover тексту: якщо last=0, показуємо 00:00
                     text:`${group}: Електроенергія є ${last === 0 ? "00:00" : minutesToTimeStr(last)}–${startStr}`,
                     showlegend:false
                 });
@@ -144,13 +141,13 @@ async function loadChart() {
 
     function getCurrentMinutes(){
         const now=new Date();
-        return now.getHours()*60 + now.getMinutes() + (now.getSeconds() / 60); // Додаємо секунди для плавного руху
+        // Додаємо секунди для плавного руху, якщо це потрібно
+        return now.getHours()*60 + now.getMinutes() + (now.getSeconds() / 60); 
     }
     
-    // *** ВИПРАВЛЕННЯ 3: Жорстке визначення 25 міток для 24-годинного графіка ***
-    const tickVals = Array.from({length: 25}, (_, i) => i * 60); // 0, 60, ..., 1440 (хвилини)
+    // Створення 25 міток для 24-годинного графіка
+    const tickVals = Array.from({length: 25}, (_, i) => i * 60); 
     
-    // Форматуємо 24-годинний час для міток
     const tickText = Array.from({length: 25}, (_, i) => {
         const hour = i;
         if (hour === 24) return "24:00";
@@ -164,8 +161,8 @@ async function loadChart() {
             title:"Час",
             type: "linear", 
             range:[0,1440], // Жорстко встановлюємо діапазон 0-1440
-            tickvals: tickVals, // Мітки для кожної години
-            ticktext: tickText, // Текст міток (00:00, 01:00, ..., 24:00)
+            tickvals: tickVals, 
+            ticktext: tickText, 
             tickangle: 0 
         },
         yaxis:{
@@ -186,11 +183,11 @@ async function loadChart() {
 
     Plotly.newPlot("chart",traces,layout);
 
-    // Оновлення лінії поточного часу (тепер кожні 10 секунд для плавності)
+    // Оновлення лінії поточного часу
     setInterval(()=>{
         const current=getCurrentMinutes();
         Plotly.relayout("chart",{"shapes[0].x0":current,"shapes[0].x1":current});
-    },10000); // 10000ms = 10 секунд
+    },10000); 
 }
 
 async function init(){
