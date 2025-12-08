@@ -24,7 +24,7 @@ const CSV_DATA = "https://docs.google.com/spreadsheets/d/11sNa680oNGIDLCpeUJqkWd
 const COLOR_POWER_ON = "#FFD700"; // жовтий
 const COLOR_POWER_OFF = "#000000"; // чорний
 
-// Додаємо мінімальний зсув для трасувань, що закінчуються рівно о 24:00
+// Додаємо мінімальний зсув (0.001 хвилини = 60 мілісекунд)
 const EPSILON = 0.001; 
 
 function toMinutes(t) {
@@ -36,7 +36,7 @@ function toMinutes(t) {
 }
 
 function minutesToTimeStr(minutes) {
-    if (minutes === 1440) return "24:00";
+    if (minutes >= 1440) return "24:00";
     const h = Math.floor(minutes / 60);
     const m = minutes % 60;
     const hourStr = String(h).padStart(2, '0');
@@ -129,7 +129,7 @@ async function loadChart() {
             }
 
             // 2. Відключення (від start до end)
-            // *** ВИПРАВЛЕННЯ: Додаємо EPSILON до кінцевої точки, якщо вона 1440 ***
+            // *** ВИПРАВЛЕННЯ: Додаємо EPSILON, якщо кінець рівно 1440 ***
             const finalEnd = (end === 1440) ? (end + EPSILON) : end;
 
             traces.push({
@@ -178,7 +178,8 @@ async function loadChart() {
         xaxis:{
             title:"Час",
             type: "linear", 
-            range:[0,1440], // Межа залишається 1440
+            // *** ВИПРАВЛЕННЯ: Продовжуємо діапазон осі, щоб включити EPSILON ***
+            range:[0, 1440 + EPSILON], 
             tickvals: tickVals, 
             ticktext: tickText, 
             tickangle: 0 
