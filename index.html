@@ -29,7 +29,6 @@ function toMinutes(t) {
     if (t === "24:00") { 
         return 1440; 
     }
-    // 00:00 -> 0 хвилин
     const [h, m] = t.split(":").map(Number);
     return h * 60 + m;
 }
@@ -50,36 +49,50 @@ async function fetchCSV(url) {
     return new TextDecoder("utf-8").decode(buffer);
 }
 
+// *** ВИДАЛЕНО: Стандартний parseCSV, замінено на прямий парсинг у loadChart ***
 function parseCSV(text) {
-    return text.trim().split("\n").map(row => row.split(",").map(cell => cell.replace(/^"|"$/g,'').trim()));
+    return text.trim().split("\n"); // Просто розділяємо на рядки
 }
 
 async function loadInfo() {
     const csv = await fetchCSV(CSV_INFO);
     const rows = parseCSV(csv);
-    document.getElementById("title").textContent = `Графік погодинних відключень на ${rows[0][1]}`;
-    document.getElementById("updated").textContent = `Інформація станом на ${rows[1][1]}`;
+    // Припускаємо, що метадані завжди йдуть у перших двох рядках
+    const infoRow = rows[0].split(",").map(cell => cell.replace(/^"|"$/g,'').trim());
+    const updatedRow = rows[1].split(",").map(cell => cell.replace(/^"|"$/g,'').trim());
+    
+    document.getElementById("title").textContent = `Графік погодинних відключень на ${infoRow[1]}`;
+    document.getElementById("updated").textContent = `Інформація станом на ${updatedRow[1]}`;
 }
 
 async function loadChart() {
     const csv = await fetchCSV(CSV_DATA);
-    const rows = parseCSV(csv);
+    const rows = parseCSV(csv); // Отримуємо масив рядків
 
     const groups = [];
     const outages = {};
     
-    // Ітерація по всіх рядках і перевірка на валідність
+    // Ітерація по всіх рядках даних
     rows.forEach(row => {
-        const group = row[0];
-        const intervalsStr = row[1];
+        // *** КЛЮЧОВЕ ВИПРАВЛЕННЯ: Надійний парсинг двох колонок ***
+        // Використовуємо регулярний вираз для розділення: 
+        // 1. Назва групи (будь-що до першої коми)
+        // 2. Інтервали (будь-що після першої коми, видаляючи зовнішні лапки)
+        
+        const match = row.match(/^([^,]+),?(.+)$/); // Шукаємо "Група,"Інтервали"
+        if (!match) return; 
 
+        let group = match[1].trim(); // Назва групи
+        let intervalsStr = match[2].replace(/^"|"$/g, '').trim(); // Рядок інтервалів, очищений від лапок
+        
+        // Фільтруємо заголовки та пусті дані
         if (!group || !intervalsStr || group === "Група" || group === "Group") return; 
 
         groups.push(group);
         
-        // *** ПОСИЛЕНИЙ ПАРСИНГ: Видаляємо всі пробіли та розбиваємо ***
-        const cleanIntervalsStr = intervalsStr.replace(/\s/g, ''); // Видаляємо всі пробіли
-        const intervals = cleanIntervalsStr.split(",").filter(s => s.includes('-')); // Фільтруємо невалідні
+        // Розбиваємо рядок з інтервалами на окремі елементи, видаляючи пробіли
+        const cleanIntervalsStr = intervalsStr.replace(/\s/g, ''); 
+        const intervals = cleanIntervalsStr.split(",").filter(s => s.includes('-')); 
         
         // *** ДІАГНОСТИКА: Перевірте консоль браузера! ***
         if (group === "1.1") {
@@ -94,6 +107,11 @@ async function loadChart() {
             return [start,end]; 
         });
     });
+    
+    // Якщо не знайдено жодної групи, можливо, є проблема з заголовками
+    if (groups.length === 0) {
+        console.error("Не знайдено жодної групи даних. Перевірте формат CSV.");
+    }
 
     const traces = [];
 
@@ -101,7 +119,7 @@ async function loadChart() {
         let last = 0; // Хвилини (починаємо з 00:00)
         const intervals = outages[group];
 
-        // *** ЦИКЛ ОБРОБКИ ІНТЕРВАЛІВ ДЛЯ КОЖНОЇ ГРУПИ ***
+        // ЦИКЛ ОБРОБКИ ІНТЕРВАЛІВ
         intervals.forEach(interval=>{
             const startStr = interval[0];
             const endStr = interval[1];
@@ -109,7 +127,6 @@ async function loadChart() {
             const start = toMinutes(startStr); // Хвилини
             const end = toMinutes(endStr);   // Хвилини
             
-            // Якщо інтервал невалідний (start >= end)
             if (start >= end && end !== 1440) return;
 
             // 1. Світло є (від last до start)
@@ -136,7 +153,6 @@ async function loadChart() {
                 showlegend:false
             });
 
-            // *** ГАРАНТУЄМО ОНОВЛЕННЯ ЗМІННОЇ last ***
             last = end; 
         });
 
