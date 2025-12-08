@@ -2,7 +2,7 @@
 <html lang="uk">
 <head>
 <meta charset="UTF-8">
-<title>Графік відключень електроенергії</title>
+<title>Графік відключень електроенергії (Тільки Відключення)</title>
 <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
 <style>
     body { font-family: Arial, sans-serif; margin: 20px; background: #fafafa; }
@@ -21,9 +21,9 @@
 const CSV_INFO = "https://docs.google.com/spreadsheets/d/11sNa680oNGIDLCpeUJqkWd0gpxVIFz9gaZuop-hLE_8/export?format=csv&gid=0";
 const CSV_DATA = "https://docs.google.com/spreadsheets/d/11sNa680oNGIDLCpeUJqkWd0gpxVIFz9gaZuop-hLE_8/export?format=csv&gid=1945313917";
 
-const COLOR_POWER_ON = "#FFD700"; // жовтий
-const COLOR_POWER_OFF = "#000000"; // чорний
-const EPSILON = 0.001; // Невеликий зсув для осі та 24:00
+// Залишаємо лише колір для відключень
+const COLOR_POWER_OFF = "#000000"; 
+const EPSILON = 0.001; 
 
 function toMinutes(t) {
     if (t === "24:00") { 
@@ -101,7 +101,7 @@ async function loadChart() {
     const traces = [];
 
     groups.forEach(group=>{
-        let last = 0; 
+        
         const intervals = outages[group];
 
         intervals.forEach(interval=>{
@@ -113,22 +113,9 @@ async function loadChart() {
             
             if (start >= end && end !== 1440) return;
 
-            // 1. Світло є (від last до start)
-            if(start > last){
-                traces.push({
-                    x:[last,start],
-                    y:[group,group],
-                    mode:"lines",
-                    line:{width:18,color:COLOR_POWER_ON},
-                    hoverinfo:"text",
-                    text:`${group}: Електроенергія є ${last === 0 ? "00:00" : minutesToTimeStr(last)}–${startStr}`,
-                    showlegend:false,
-                    z: 0 // *** НИЖЧИЙ Z-ІНДЕКС ДЛЯ ЖОВТОГО ***
-                });
-            }
+            // *** ВИДАЛЕНО: БЛОК "СВІТЛО Є" (ЖОВТИЙ) ***
 
-            // 2. Відключення (від start до end)
-            // Використовуємо EPSILON для трасування, що закінчуються рівно на 1440
+            // Відключення (чорна смуга)
             const finalEnd = (end === 1440) ? (end + EPSILON) : end;
 
             traces.push({
@@ -139,25 +126,11 @@ async function loadChart() {
                 hoverinfo:"text",
                 text:`${group}: Відключення ${startStr}–${endStr === "24:00" ? "00:00" : endStr}`,
                 showlegend:false,
-                z: 1 // *** ВИЩИЙ Z-ІНДЕКС ДЛЯ ЧОРНОГО ***
+                z: 1 // Вищий Z-індекс для чорного кольору
             });
-
-            last = end; 
         });
         
-        // 3. Світло є до кінця дня (якщо last < 1440)
-        if(last < 1440){
-            traces.push({
-                x:[last,1440],
-                y:[group,group],
-                mode:"lines",
-                line:{width:18,color:COLOR_POWER_ON},
-                hoverinfo:"text",
-                text:`${group}: Електроенергія є ${minutesToTimeStr(last)}–24:00`,
-                showlegend:false,
-                z: 0 // *** НИЖЧИЙ Z-ІНДЕКС ДЛЯ ЖОВТОГО ***
-            });
-        }
+        // *** ВИДАЛЕНО: БЛОК "СВІТЛО Є ДО КІНЦЯ ДНЯ" (ЖОВТИЙ) ***
     });
 
     function getCurrentMinutes(){
@@ -179,7 +152,7 @@ async function loadChart() {
         xaxis:{
             title:"Час",
             type: "linear", 
-            range:[0, 1440 + EPSILON], // Діапазон осі повинен включати EPSILON
+            range:[0, 1440 + EPSILON], 
             tickvals: tickVals, 
             ticktext: tickText, 
             tickangle: 0 
@@ -190,6 +163,7 @@ async function loadChart() {
             categoryorder: "array",
             categoryarray: groups
         },
+        // Малюємо червону лінію поточного часу
         shapes:[{
             type:"line",
             x0:getCurrentMinutes(),
@@ -201,6 +175,7 @@ async function loadChart() {
     };
 
     Plotly.newPlot("chart",traces,layout);
+    // 
 
     setInterval(()=>{
         const current=getCurrentMinutes();
