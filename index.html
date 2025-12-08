@@ -2,7 +2,7 @@
 <html lang="uk">
 <head>
 <meta charset="UTF-8">
-<title>Графік відключень електроенергії (Фінальна версія)</title>
+<title>Графік відключень електроенергії (Фінальна версія 0-24)</title>
 <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
 <style>
     body { font-family: Arial, sans-serif; margin: 20px; background: #fafafa; }
@@ -22,18 +22,8 @@ const CSV_INFO = "https://docs.google.com/spreadsheets/d/11sNa680oNGIDLCpeUJqkWd
 const CSV_DATA = "https://docs.google.com/spreadsheets/d/11sNa680oNGIDLCpeUJqkWd0gpxVIFz9gaZuop-hLE_8/export?format=csv&gid=1945313917";
 
 const COLOR_POWER_OFF = "#000000"; 
-const START_DATE = "2025-01-01"; // Фіксована дата для осі
+// Видаляємо EPSILON
 
-// Конвертує HH:MM у формат дати, який Plotly розуміє
-function toPlotlyTime(t) {
-    if (t === "24:00") {
-        // 24:00 = 00:00 наступного дня
-        return "2025-01-02 00:00:00"; 
-    }
-    return `${START_DATE} ${t}:00`;
-}
-
-// Конвертує HH:MM у хвилини для hover (ця функція залишається для внутрішньої логіки)
 function toMinutes(t) {
     if (t === "24:00") { 
         return 1440; 
@@ -42,15 +32,23 @@ function toMinutes(t) {
     return h * 60 + m;
 }
 
-// Решта допоміжних функцій залишаються без змін, оскільки вони не стосуються візуалізації
-function parseCSV(text) {
-    return text.trim().split("\n");
+function minutesToTimeStr(minutes) {
+    if (minutes >= 1440) return "24:00";
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    const hourStr = String(h).padStart(2, '0');
+    const minuteStr = String(m).padStart(2, '0');
+    return `${hourStr}:${minuteStr}`;
 }
 
 async function fetchCSV(url) {
     const response = await fetch(url);
     const buffer = await response.arrayBuffer();
     return new TextDecoder("utf-8").decode(buffer);
+}
+
+function parseCSV(text) {
+    return text.trim().split("\n");
 }
 
 async function loadInfo() {
@@ -109,16 +107,18 @@ async function loadChart() {
             const startStr = interval[0];
             const endStr = interval[1];
             
-            // *** ВИПРАВЛЕННЯ: Використовуємо toPlotlyTime для осі X ***
-            const start_dt = toPlotlyTime(startStr);
-            const end_dt = toPlotlyTime(endStr);
+            const start = toMinutes(startStr);
+            let end = toMinutes(endStr);
             
-            // Якщо інтервал невалідний (час початку >= часу кінця в хвилинах)
-            if (toMinutes(startStr) >= toMinutes(endStr) && endStr !== "24:00") return;
+            if (start >= end && end !== 1440) return;
+
+            // *** ФІНАЛЬНЕ ВИПРАВЛЕННЯ: Зсув кінцевої точки для відключення о 24:00 ***
+            // Якщо кінець рівно 1440, встановлюємо його на 1439.999, щоб він був усередині range:[0, 1440]
+            const finalEnd = (end === 1440) ? 1439.999 : end;
 
             // Відключення (чорна смуга)
             traces.push({
-                x:[start_dt, end_dt], 
+                x:[start,finalEnd], 
                 y:[group,group],
                 mode:"lines",
                 line:{width:18,color:COLOR_POWER_OFF},
@@ -129,25 +129,30 @@ async function loadChart() {
             });
         });
     });
-    
-    // Оскільки Plotly на осі 'date' сам визначить мітки, ми не використовуємо tickvals/ticktext
 
-    function getCurrentTimePlotly(){
+    function getCurrentMinutes(){
         const now=new Date();
-        const dateStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
-        const timeStr = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
-        // Ми використовуємо фіксовану дату (2025-01-01), щоб червона лінія відображалася коректно
-        return `${START_DATE} ${timeStr}`;
+        return now.getHours()*60 + now.getMinutes() + (now.getSeconds() / 60); 
     }
+    
+    const tickVals = Array.from({length: 25}, (_, i) => i * 60); 
+    
+    const tickText = Array.from({length: 25}, (_, i) => {
+        const hour = i;
+        if (hour === 24) return "24:00";
+        return `${String(hour).padStart(2, '0')}:00`;
+    });
+
 
     const layout = {
         showlegend:false,
         xaxis:{
             title:"Час",
-            type: "date", // *** ВИПРАВЛЕННЯ: Встановлюємо type: 'date' ***
-            range:[`${START_DATE} 00:00:00`, `2025-01-02 00:00:00`], // 24 години
-            tickformat: "%H:%M", // Формат міток
-            // ПРИМІТКА: dtick Plotly сам визначає, або можна встановити dtick: 3600000 (1 година в мс)
+            type: "linear", // Повернення до лінійної осі
+            range:[0, 1440], // Фіксований діапазон
+            tickvals: tickVals, 
+            ticktext: tickText, 
+            tickangle: 0 
         },
         yaxis:{
             title:"Групи",
@@ -155,12 +160,10 @@ async function loadChart() {
             categoryorder: "array",
             categoryarray: groups
         },
-        // Малюємо червону лінію поточного часу
         shapes:[{
             type:"line",
-            // *** ВИКОРИСТАННЯ ЧАСУ PLOTLY ДЛЯ ЧЕРВОНОЇ ЛІНІЇ ***
-            x0:getCurrentTimePlotly(), 
-            x1:getCurrentTimePlotly(),
+            x0:getCurrentMinutes(),
+            x1:getCurrentMinutes(),
             y0:-1,
             y1:groups.length,
             line:{color:"red",width:2,dash:"dash"}
@@ -169,9 +172,8 @@ async function loadChart() {
 
     Plotly.newPlot("chart",traces,layout);
 
-    // Оновлення червоної лінії
     setInterval(()=>{
-        const current=getCurrentTimePlotly();
+        const current=getCurrentMinutes();
         Plotly.relayout("chart",{"shapes[0].x0":current,"shapes[0].x1":current});
     },10000); 
 }
