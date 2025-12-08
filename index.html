@@ -42,8 +42,8 @@ function parseCSV(text) {
 async function loadInfo() {
     const csv = await fetchCSV(CSV_INFO);
     const rows = parseCSV(csv);
-    document.getElementById("title").textContent = rows[0][0];
-    document.getElementById("updated").textContent = rows[1][0];
+    document.getElementById("title").textContent = `Графік погодинних відключень на ${rows[0][1]}`;
+    document.getElementById("updated").textContent = `Інформація станом на ${rows[1][1]}`;
 }
 
 async function loadChart() {
@@ -53,7 +53,6 @@ async function loadChart() {
     const groups = [];
     const outages = {};
 
-    // Формуємо об'єкт: "Група": [["start","end"], ...]
     for(let i=1;i<rows.length;i++){
         const group = rows[i][0];
         groups.push(group);
@@ -74,7 +73,6 @@ async function loadChart() {
             const start = toMinutes(interval[0]);
             const end = toMinutes(interval[1]);
 
-            // період з електрикою
             if(start>last){
                 traces.push({
                     x:[last,start],
@@ -87,7 +85,6 @@ async function loadChart() {
                 });
             }
 
-            // період відключення
             traces.push({
                 x:[start,end],
                 y:[group,group],
@@ -140,7 +137,6 @@ async function loadChart() {
 
     Plotly.newPlot("chart",traces,layout);
 
-    // оновлення червоної лінії щохвилини
     setInterval(()=>{
         const current=getCurrentMinutes();
         Plotly.relayout("chart",{"shapes[0].x0":current,"shapes[0].x1":current});
