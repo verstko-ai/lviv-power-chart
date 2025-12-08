@@ -23,9 +23,7 @@ const CSV_DATA = "https://docs.google.com/spreadsheets/d/11sNa680oNGIDLCpeUJqkWd
 
 const COLOR_POWER_ON = "#FFD700"; // жовтий
 const COLOR_POWER_OFF = "#000000"; // чорний
-
-// Додаємо мінімальний зсув (0.001 хвилини = 60 мілісекунд)
-const EPSILON = 0.001; 
+const EPSILON = 0.001; // Невеликий зсув для осі та 24:00
 
 function toMinutes(t) {
     if (t === "24:00") { 
@@ -124,25 +122,27 @@ async function loadChart() {
                     line:{width:18,color:COLOR_POWER_ON},
                     hoverinfo:"text",
                     text:`${group}: Електроенергія є ${last === 0 ? "00:00" : minutesToTimeStr(last)}–${startStr}`,
-                    showlegend:false
+                    showlegend:false,
+                    z: 0 // *** НИЖЧИЙ Z-ІНДЕКС ДЛЯ ЖОВТОГО ***
                 });
             }
 
             // 2. Відключення (від start до end)
-            // *** ВИПРАВЛЕННЯ: Додаємо EPSILON, якщо кінець рівно 1440 ***
+            // Використовуємо EPSILON для трасування, що закінчуються рівно на 1440
             const finalEnd = (end === 1440) ? (end + EPSILON) : end;
 
             traces.push({
-                x:[start,finalEnd], // Використовуємо зміщений кінець
+                x:[start,finalEnd], 
                 y:[group,group],
                 mode:"lines",
                 line:{width:18,color:COLOR_POWER_OFF},
                 hoverinfo:"text",
                 text:`${group}: Відключення ${startStr}–${endStr === "24:00" ? "00:00" : endStr}`,
-                showlegend:false
+                showlegend:false,
+                z: 1 // *** ВИЩИЙ Z-ІНДЕКС ДЛЯ ЧОРНОГО ***
             });
 
-            last = end; // last залишається 1440, щоб не спрацював блок "Світло до кінця дня"
+            last = end; 
         });
         
         // 3. Світло є до кінця дня (якщо last < 1440)
@@ -154,7 +154,8 @@ async function loadChart() {
                 line:{width:18,color:COLOR_POWER_ON},
                 hoverinfo:"text",
                 text:`${group}: Електроенергія є ${minutesToTimeStr(last)}–24:00`,
-                showlegend:false
+                showlegend:false,
+                z: 0 // *** НИЖЧИЙ Z-ІНДЕКС ДЛЯ ЖОВТОГО ***
             });
         }
     });
@@ -178,8 +179,7 @@ async function loadChart() {
         xaxis:{
             title:"Час",
             type: "linear", 
-            // *** ВИПРАВЛЕННЯ: Продовжуємо діапазон осі, щоб включити EPSILON ***
-            range:[0, 1440 + EPSILON], 
+            range:[0, 1440 + EPSILON], // Діапазон осі повинен включати EPSILON
             tickvals: tickVals, 
             ticktext: tickText, 
             tickangle: 0 
