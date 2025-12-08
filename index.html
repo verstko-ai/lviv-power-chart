@@ -53,12 +53,12 @@ async function loadChart() {
     const groups = [];
     const outages = {};
 
-    for(let i=1;i<rows.length;i++){
+    for(let i=0;i<rows.length;i++){
         const group = rows[i][0];
         groups.push(group);
         const intervals = rows[i][1].split(",").map(s=>s.trim());
         outages[group] = intervals.map(interval=>{
-            const [start,end] = interval.split("–").map(s=>s.trim());
+            const [start,end] = interval.split("-").map(s=>s.trim()); // <- виправлено дефіс
             return [start,end];
         });
     }
