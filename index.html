@@ -2,7 +2,7 @@
 <html lang="uk">
 <head>
 <meta charset="UTF-8">
-<title>Графік відключень електроенергії (Фінальна версія 0-24)</title>
+<title>Графік відключень електроенергії (10-хвилинні слоти)</title>
 <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
 <style>
     body { font-family: Arial, sans-serif; margin: 20px; background: #fafafa; }
@@ -22,17 +22,25 @@ const CSV_INFO = "https://docs.google.com/spreadsheets/d/11sNa680oNGIDLCpeUJqkWd
 const CSV_DATA = "https://docs.google.com/spreadsheets/d/11sNa680oNGIDLCpeUJqkWd0gpxVIFz9gaZuop-hLE_8/export?format=csv&gid=1945313917";
 
 const COLOR_POWER_OFF = "#000000"; 
-// Видаляємо EPSILON
+// *** НОВА КОНСТАНТА: Кількість хвилин в одному слоті ***
+const SLOT_DURATION = 10;
+// *** НОВА КОНСТАНТА: Максимальна кількість слотів (1440 / 10 = 144) ***
+const MAX_SLOTS = 1440 / SLOT_DURATION; 
 
-function toMinutes(t) {
+// Конвертує HH:MM у кількість 10-хвилинних слотів (0 - 144)
+function toSlots(t) {
     if (t === "24:00") { 
-        return 1440; 
+        return MAX_SLOTS; // 144 слоти
     }
     const [h, m] = t.split(":").map(Number);
-    return h * 60 + m;
+    const minutes = h * 60 + m;
+    // Округлюємо, щоб мінімізувати помилки, хоча для 10хв цього не повинно бути
+    return Math.round(minutes / SLOT_DURATION); 
 }
 
-function minutesToTimeStr(minutes) {
+// Конвертує кількість слотів у рядок часу HH:MM (для hover)
+function slotsToTimeStr(slots) {
+    const minutes = slots * SLOT_DURATION;
     if (minutes >= 1440) return "24:00";
     const h = Math.floor(minutes / 60);
     const m = minutes % 60;
@@ -107,18 +115,19 @@ async function loadChart() {
             const startStr = interval[0];
             const endStr = interval[1];
             
-            const start = toMinutes(startStr);
-            let end = toMinutes(endStr);
+            // *** КОНВЕРТАЦІЯ У СЛОТИ ***
+            const startSlot = toSlots(startStr);
+            let endSlot = toSlots(endStr);
             
-            if (start >= end && end !== 1440) return;
+            if (startSlot >= endSlot && endStr !== "24:00") return;
 
-            // *** ФІНАЛЬНЕ ВИПРАВЛЕННЯ: Зсув кінцевої точки для відключення о 24:00 ***
-            // Якщо кінець рівно 1440, встановлюємо його на 1439.999, щоб він був усередині range:[0, 1440]
-            const finalEnd = (end === 1440) ? 1439.999 : end;
+            // *** ВИПРАВЛЕННЯ ГРАНИЧНОЇ ТОЧКИ 144 (24:00) ***
+            // Якщо кінець рівно 144, встановлюємо його на 143.999, щоб він був усередині range:[0, 144]
+            const finalEndSlot = (endSlot === MAX_SLOTS) ? (MAX_SLOTS - 0.001) : endSlot;
 
             // Відключення (чорна смуга)
             traces.push({
-                x:[start,finalEnd], 
+                x:[startSlot,finalEndSlot], 
                 y:[group,group],
                 mode:"lines",
                 line:{width:18,color:COLOR_POWER_OFF},
@@ -130,12 +139,16 @@ async function loadChart() {
         });
     });
 
-    function getCurrentMinutes(){
+    function getCurrentSlot(){
         const now=new Date();
-        return now.getHours()*60 + now.getMinutes() + (now.getSeconds() / 60); 
+        const minutes = now.getHours()*60 + now.getMinutes() + (now.getSeconds() / 60); 
+        // Конвертуємо поточний час у слоти
+        return minutes / SLOT_DURATION;
     }
     
-    const tickVals = Array.from({length: 25}, (_, i) => i * 60); 
+    // *** НАЛАШТУВАННЯ ОСІ X (СЛОТИ) ***
+    // 25 міток (від 00:00 до 24:00), кожні 6 слотів = 60 хвилин
+    const tickVals = Array.from({length: 25}, (_, i) => i * 6); 
     
     const tickText = Array.from({length: 25}, (_, i) => {
         const hour = i;
@@ -148,8 +161,8 @@ async function loadChart() {
         showlegend:false,
         xaxis:{
             title:"Час",
-            type: "linear", // Повернення до лінійної осі
-            range:[0, 1440], // Фіксований діапазон
+            type: "linear", 
+            range:[0, MAX_SLOTS], // Діапазон 0 - 144
             tickvals: tickVals, 
             ticktext: tickText, 
             tickangle: 0 
@@ -162,8 +175,9 @@ async function loadChart() {
         },
         shapes:[{
             type:"line",
-            x0:getCurrentMinutes(),
-            x1:getCurrentMinutes(),
+            // *** ВИКОРИСТАННЯ ПОТОЧНОГО СЛОТА ***
+            x0:getCurrentSlot(),
+            x1:getCurrentSlot(),
             y0:-1,
             y1:groups.length,
             line:{color:"red",width:2,dash:"dash"}
@@ -173,7 +187,7 @@ async function loadChart() {
     Plotly.newPlot("chart",traces,layout);
 
     setInterval(()=>{
-        const current=getCurrentMinutes();
+        const current=getCurrentSlot();
         Plotly.relayout("chart",{"shapes[0].x0":current,"shapes[0].x1":current});
     },10000); 
 }
