@@ -24,18 +24,22 @@ const CSV_DATA = "https://docs.google.com/spreadsheets/d/11sNa680oNGIDLCpeUJqkWd
 const COLOR_POWER_ON = "#FFD700"; // жовтий
 const COLOR_POWER_OFF = "#000000"; // чорний
 
-// Нова функція: конвертує хвилини (0-1440) у рядок часу "HH:MM"
-function toTimeStr(minutes) {
-    const h = Math.floor(minutes / 60) % 24; // % 24 для 1440 хвилин (24:00)
+// *** ВИПРАВЛЕННЯ: Додана обробка "24:00" для коректного відображення 1440 хвилин ***
+function toMinutes(t) {
+    if (t === "24:00") {
+        return 1440;
+    }
+    const [h,m] = t.split(":").map(Number);
+    return h*60 + m;
+}
+
+// Допоміжна функція для перетворення хвилин у рядок часу (для hover text)
+function minutesToTimeStr(minutes) {
+    const h = Math.floor(minutes / 60) % 24;
     const m = minutes % 60;
     const hourStr = String(h).padStart(2, '0');
     const minuteStr = String(m).padStart(2, '0');
     return `${hourStr}:${minuteStr}`;
-}
-
-function toMinutes(t) {
-    const [h,m] = t.split(":").map(Number);
-    return h*60 + m;
 }
 
 async function fetchCSV(url) {
@@ -67,101 +71,85 @@ async function loadChart() {
         groups.push(group);
         const intervals = rows[i][1].split(",").map(s=>s.trim());
         outages[group] = intervals.map(interval=>{
-            const [start,end] = interval.split("-").map(s=>s.trim()); 
+            // Замінюємо "00:00" в кінці інтервалу на "24:00", якщо воно є (для коректної обробки 1440)
+            let [start,end] = interval.split("-").map(s=>s.trim()); 
+            if (end === "00:00") end = "24:00"; 
             return [start,end];
         });
     }
 
     const traces = [];
-    const allTimePoints = new Set(); // Для збору всіх категорій часу
 
     groups.forEach(group=>{
-        let lastMinutes = 0;
+        let last = 0; // Хвилини
         const intervals = outages[group];
 
         intervals.forEach(interval=>{
-            const startMinutes = toMinutes(interval[0]);
-            const endMinutes = toMinutes(interval[1]);
             const startStr = interval[0];
             const endStr = interval[1];
             
-            // Додаємо точки часу для категорії
-            allTimePoints.add(toTimeStr(lastMinutes));
-            allTimePoints.add(startStr);
-            allTimePoints.add(endStr);
-            allTimePoints.add("24:00"); // Щоб забезпечити кінець осі на 24:00
+            const start = toMinutes(startStr); // Хвилини
+            const end = toMinutes(endStr);   // Хвилини
 
-            // Світло є (від lastMinutes до startMinutes)
-            if(startMinutes > lastMinutes){
+            // Світло є (від last до start)
+            if(start>last){
                 traces.push({
-                    // *** ВИПРАВЛЕНО: Використовуємо рядки часу як категорії ***
-                    x:[toTimeStr(lastMinutes), startStr],
+                    x:[last,start],
                     y:[group,group],
                     mode:"lines",
                     line:{width:18,color:COLOR_POWER_ON},
                     hoverinfo:"text",
-                    text:`${group}: Електроенергія є ${toTimeStr(lastMinutes)}–${startStr}`,
+                    text:`${group}: Електроенергія є ${minutesToTimeStr(last)}–${startStr === "24:00" ? "00:00" : startStr}`,
                     showlegend:false
                 });
             }
 
-            // Відключення (від startMinutes до endMinutes)
+            // Відключення (від start до end)
             traces.push({
-                // *** ВИПРАВЛЕНО: Використовуємо рядки часу як категорії ***
-                x:[startStr, endStr],
+                x:[start,end],
                 y:[group,group],
                 mode:"lines",
                 line:{width:18,color:COLOR_POWER_OFF},
                 hoverinfo:"text",
-                text:`${group}: Відключення ${startStr}–${endStr}`,
+                text:`${group}: Відключення ${startStr}–${endStr === "24:00" ? "00:00" : endStr}`,
                 showlegend:false
             });
 
-            lastMinutes = endMinutes;
+            last=end; // last тепер у хвилинах
         });
 
-        // Світло є до кінця дня (від lastMinutes до 1440)
-        if(lastMinutes < 1440){
+        // Світло є до кінця дня (від last до 1440)
+        if(last<1440){
             traces.push({
-                // *** ВИПРАВЛЕНО: Використовуємо рядки часу як категорії, 1440 = 24:00 ***
-                x:[toTimeStr(lastMinutes), "24:00"],
+                x:[last,1440],
                 y:[group,group],
                 mode:"lines",
                 line:{width:18,color:COLOR_POWER_ON},
                 hoverinfo:"text",
-                text:`${group}: Електроенергія є ${toTimeStr(lastMinutes)}–24:00`,
+                text:`${group}: Електроенергія є ${minutesToTimeStr(last)}–24:00`,
                 showlegend:false
             });
         }
     });
 
-    // Формуємо повний список категорій осі X, сортуючи їх
-    const allTimePointsSorted = Array.from(allTimePoints).sort((a, b) => {
-        return toMinutes(a) - toMinutes(b);
-    });
-
-    // Фільтруємо, залишаючи лише позначки кожної години та початку/кінця відключень
-    const hourlyTicks = Array.from({length: 25}, (_, i) => toTimeStr(i * 60));
-    const finalTicks = Array.from(new Set([...hourlyTicks, ...allTimePointsSorted])).sort((a, b) => toMinutes(a) - toMinutes(b));
-
-    function getCurrentTimeStr(){
+    function getCurrentMinutes(){
         const now=new Date();
-        const h = now.getHours();
-        const m = now.getMinutes();
-        return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+        return now.getHours()*60 + now.getMinutes();
     }
+    
+    // *** ВИПРАВЛЕННЯ: Створення масиву годинних міток, включаючи 24:00 ***
+    const tickVals = Array.from({length: 25}, (_, i) => i * 60); // 0, 60, 120, ..., 1440
+    const tickText = Array.from({length: 25}, (_, i) => `${String(i % 24).padStart(2, '0')}:00`);
+    tickText[24] = "24:00"; // Явна мітка для 1440 хвилин
 
     const layout = {
         showlegend:false,
         xaxis:{
             title:"Час",
-            // *** ВИПРАВЛЕНО: Встановлюємо type: "category" ***
-            type: "category", 
-            // Використовуємо всі точки часу, які з'являються на графіку, як категорії
-            categoryorder: "array",
-            categoryarray: finalTicks,
-            // Відображаємо лише годинні позначки для чистоти
-            tickvals: hourlyTicks
+            type: "linear", // *** ПОВЕРНУТО: Використовуємо linear для коректних інтервалів ***
+            range:[0,1440], // Діапазон від 00:00 до 24:00
+            tickvals: tickVals,
+            ticktext: tickText
         },
         yaxis:{
             title:"Групи",
@@ -171,9 +159,9 @@ async function loadChart() {
         },
         shapes:[{
             type:"line",
-            // *** ВИПРАВЛЕНО: Використовуємо getCurrentTimeStr() замість хвилин ***
-            x0:getCurrentTimeStr(),
-            x1:getCurrentTimeStr(),
+            // *** ВИКОРИСТАННЯ ХВИЛИН: Для лінійної осі потрібно використовувати числові значення ***
+            x0:getCurrentMinutes(),
+            x1:getCurrentMinutes(),
             y0:-1,
             y1:groups.length,
             line:{color:"red",width:2,dash:"dash"}
@@ -182,10 +170,10 @@ async function loadChart() {
 
     Plotly.newPlot("chart",traces,layout);
 
-    // Оновлення лінії поточного часу кожну хвилину
+    // Оновлення лінії поточного часу
     setInterval(()=>{
-        const currentTimeStr = getCurrentTimeStr();
-        Plotly.relayout("chart",{"shapes[0].x0":currentTimeStr,"shapes[0].x1":currentTimeStr});
+        const current=getCurrentMinutes();
+        Plotly.relayout("chart",{"shapes[0].x0":current,"shapes[0].x1":current});
     },60000);
 }
 
