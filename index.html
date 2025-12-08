@@ -2,7 +2,7 @@
 <html lang="uk">
 <head>
 <meta charset="UTF-8">
-<title>Графік відключень електроенергії (Тільки Відключення)</title>
+<title>Графік погодинних відключень (Тільки Відключення)</title>
 <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
 <style>
     body { font-family: Arial, sans-serif; margin: 20px; background: #fafafa; }
@@ -77,12 +77,8 @@ async function loadChart() {
         
         if (!group || !intervalsStr || group === "Група" || group === "Group") return; 
 
-        // *** ВИПРАВЛЕННЯ: Посилене очищення та фільтрація інтервалів ***
         const cleanIntervalsStr = intervalsStr.replace(/\s/g, ''); 
-        // 1. Розділяємо
-        const rawIntervals = cleanIntervalsStr.split(",");
-        // 2. Фільтруємо лише валідні інтервали (мають містити дефіс)
-        const intervals = rawIntervals.filter(s => s.includes('-') && s.length > 0); 
+        const intervals = cleanIntervalsStr.split(",").filter(s => s.includes('-') && s.length > 0); 
         
         if (intervals.length === 0) return;
         
@@ -105,8 +101,10 @@ async function loadChart() {
 
     groups.forEach(group=>{
         
+        // Тут більше не потрібна змінна 'last'
         const intervals = outages[group];
 
+        // *** ВИПРАВЛЕННЯ: Простий цикл для малювання лише чорних смуг ***
         intervals.forEach(interval=>{
             const startStr = interval[0];
             const endStr = interval[1];
@@ -131,6 +129,8 @@ async function loadChart() {
                 z: 1 
             });
         });
+        
+        // *** ВИДАЛЕНО: ЛОГІКУ "СВІТЛО Є ДО КІНЦЯ ДНЯ" ***
     });
 
     function getCurrentMinutes(){
