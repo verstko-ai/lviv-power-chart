@@ -24,6 +24,9 @@ const CSV_DATA = "https://docs.google.com/spreadsheets/d/11sNa680oNGIDLCpeUJqkWd
 const COLOR_POWER_ON = "#FFD700"; // жовтий
 const COLOR_POWER_OFF = "#000000"; // чорний
 
+// Додаємо мінімальний зсув для трасувань, що закінчуються рівно о 24:00
+const EPSILON = 0.001; 
+
 function toMinutes(t) {
     if (t === "24:00") { 
         return 1440; 
@@ -103,18 +106,12 @@ async function loadChart() {
         let last = 0; 
         const intervals = outages[group];
 
-        // *** ДІАГНОСТИКА: Виводимо останній інтервал для перевірки ***
-        const lastInterval = intervals[intervals.length - 1];
-        if (group === "1.1" && lastInterval) {
-            console.log(`Група ${group}. Останній інтервал: ${lastInterval[0]}–${lastInterval[1]}`);
-        }
-        
         intervals.forEach(interval=>{
             const startStr = interval[0];
             const endStr = interval[1];
             
             const start = toMinutes(startStr);
-            const end = toMinutes(endStr);
+            let end = toMinutes(endStr);
             
             if (start >= end && end !== 1440) return;
 
@@ -132,8 +129,11 @@ async function loadChart() {
             }
 
             // 2. Відключення (від start до end)
+            // *** ВИПРАВЛЕННЯ: Додаємо EPSILON до кінцевої точки, якщо вона 1440 ***
+            const finalEnd = (end === 1440) ? (end + EPSILON) : end;
+
             traces.push({
-                x:[start,end],
+                x:[start,finalEnd], // Використовуємо зміщений кінець
                 y:[group,group],
                 mode:"lines",
                 line:{width:18,color:COLOR_POWER_OFF},
@@ -142,29 +142,8 @@ async function loadChart() {
                 showlegend:false
             });
 
-            last = end; 
+            last = end; // last залишається 1440, щоб не спрацював блок "Світло до кінця дня"
         });
-        
-        // *** ФІНАЛЬНЕ ВИПРАВЛЕННЯ: Додаємо останню трасу, якщо останній інтервал був відключенням до 24:00 ***
-        // Якщо останній інтервал був відключенням, ми додаємо "фінальну" чорну смугу, 
-        // щоб переконатися, що Plotly відобразить її до кінця, якщо вона закінчується о 1440.
-        if (last === 1440) {
-            const lastOutageStart = toMinutes(intervals[intervals.length - 1][0]);
-            const lastOutageEndStr = intervals[intervals.length - 1][1];
-
-            // Перевіряємо, чи останній відрізок був відключенням, що закінчується о 24:00
-            if (lastOutageEndStr === "24:00") {
-                 traces.push({
-                    x:[lastOutageStart, 1440],
-                    y:[group,group],
-                    mode:"lines",
-                    line:{width:18,color:COLOR_POWER_OFF},
-                    hoverinfo:"text",
-                    text:`${group}: Відключення ${intervals[intervals.length - 1][0]}–00:00`,
-                    showlegend:false
-                });
-            }
-        }
         
         // 3. Світло є до кінця дня (якщо last < 1440)
         if(last < 1440){
@@ -199,7 +178,7 @@ async function loadChart() {
         xaxis:{
             title:"Час",
             type: "linear", 
-            range:[0,1440], 
+            range:[0,1440], // Межа залишається 1440
             tickvals: tickVals, 
             ticktext: tickText, 
             tickangle: 0 
