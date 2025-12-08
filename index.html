@@ -21,10 +21,9 @@
 const CSV_INFO = "https://docs.google.com/spreadsheets/d/11sNa680oNGIDLCpeUJqkWd0gpxVIFz9gaZuop-hLE_8/export?format=csv&gid=0";
 const CSV_DATA = "https://docs.google.com/spreadsheets/d/11sNa680oNGIDLCpeUJqkWd0gpxVIFz9gaZuop-hLE_8/export?format=csv&gid=1945313917";
 
-const COLOR_POWER_ON  = "#FFD700";
-const COLOR_POWER_OFF = "#000000";
+const COLOR_POWER_ON  = "#FFD700"; // жовтий
+const COLOR_POWER_OFF = "#000000"; // чорний
 
-// HH:MM -> minutes
 function toMinutes(t) {
     const [h, m] = t.split(":").map(Number);
     return h * 60 + m;
@@ -58,142 +57,149 @@ async function loadChart() {
     const csv = await fetchCSV(CSV_DATA);
     const rows = parseCSV(csv);
 
-    const groups = [];
+    const groups  = [];
     const outages = {};
 
-    // КОЖЕН СТОВПЧИК ПІСЛЯ ПЕРШОГО = ОКРЕМИЙ ІНТЕРВАЛ
+    // ОРИГІНАЛЬНА логіка: беремо рядок з інтервалами з другого стовпця і ріжемо по комах
     for (let i = 0; i < rows.length; i++) {
-        const row = rows[i];
-        const group = row[0];
+        const group = rows[i][0];
         groups.push(group);
 
-        outages[group] = row
-            .slice(1)
-            .map(v => v.trim())
-            .filter(Boolean)
-            .map(interval => {
-                const [start, end] = interval.split("-").map(s => s.trim());
-                return [start, end];
-            });
+        const intervalsStr = rows[i][1] || "";
+        const intervals = intervalsStr
+            .split(",")
+            .map(s => s.trim())
+            .filter(s => s.length > 0);
+
+        outages[group] = intervals.map(interval => {
+            const [start, end] = interval.split("-").map(s => s.trim());
+            return [start, end];  // ["HH:MM", "HH:MM"]
+        });
     }
 
-    // РАХУЄМО КІНЕЦЬ ОСІ Х
-    const STEP = 5;
-
+    // 🔹 РОЗРАХУНОК ПРАВОЇ МЕЖІ ДЛЯ ОСІ X (maxX)
+    const STEP = 5; // 5 хвилин
     let globalMaxEnd = 0;
 
     groups.forEach(group => {
-        outages[group].forEach(([_, endStr]) => {
+        outages[group].forEach(([startStr, endStr]) => {
             const end = toMinutes(endStr);
             if (end > globalMaxEnd) globalMaxEnd = end;
         });
     });
 
-    if (globalMaxEnd === 0) globalMaxEnd = 1440;
+    // якщо раптом немає даних — доба
+    if (globalMaxEnd === 0) {
+        globalMaxEnd = 1440;
+    }
 
-    const maxX = Math.ceil(globalMaxEnd / STEP) * STEP;
+    let maxX = Math.ceil(globalMaxEnd / STEP) * STEP;
+    if (maxX > 1440) maxX = 1440; // на всяк випадок не виходимо за добу
 
     const traces = [];
 
-    // БУДУЄМО ГРАФІК
+    // 🔹 ОРИГІНАЛЬНА побудова трейсів (нічого не чіпаємо, крім доданої opacity для надійності)
     groups.forEach(group => {
         let last = 0;
+        const intervals = outages[group];
 
-        outages[group].forEach(([startStr, endStr]) => {
-            const start = toMinutes(startStr);
-            const end = toMinutes(endStr);
+        intervals.forEach(interval => {
+            const start = toMinutes(interval[0]);
+            const end   = toMinutes(interval[1]);
 
-            // світло
             if (start > last) {
                 traces.push({
-                    x:[last,start],
-                    y:[group,group],
-                    mode:"lines",
-                    line:{width:18,color:COLOR_POWER_ON},
-                    hoverinfo:"text",
-                    text:`${group}: Електроенергія є`,
-                    showlegend:false
+                    x: [last, start],
+                    y: [group, group],
+                    mode: "lines",
+                    line: { width: 18, color: COLOR_POWER_ON },
+                    hoverinfo: "text",
+                    text: `${group}: Електроенергія є`,
+                    showlegend: false,
+                    opacity: 1
                 });
             }
 
-            // відключення
             traces.push({
-                x:[start,end],
-                y:[group,group],
-                mode:"lines",
-                line:{width:18,color:COLOR_POWER_OFF},
-                hoverinfo:"text",
-                text:`${group}: Відключення ${startStr}–${endStr}`,
-                showlegend:false
+                x: [start, end],
+                y: [group, group],
+                mode: "lines",
+                line: { width: 18, color: COLOR_POWER_OFF },
+                hoverinfo: "text",
+                text: `${group}: Відключення ${interval[0]}–${interval[1]}`,
+                showlegend: false,
+                opacity: 1
             });
 
             last = end;
         });
 
-        // хвіст зі світлом
-        if (last < maxX) {
+        // "хвіст" до кінця доби (як було): 1440
+        if (last < 1440) {
             traces.push({
-                x:[last,maxX],
-                y:[group,group],
-                mode:"lines",
-                line:{width:18,color:COLOR_POWER_ON},
-                hoverinfo:"text",
-                text:`${group}: Електроенергія є`,
-                showlegend:false
+                x: [last, 1440],
+                y: [group, group],
+                mode: "lines",
+                line: { width: 18, color: COLOR_POWER_ON },
+                hoverinfo: "text",
+                text: `${group}: Електроенергія є`,
+                showlegend: false,
+                opacity: 1
             });
         }
     });
 
-    function getCurrentMinutes(){
-        const now=new Date();
-        return now.getHours()*60 + now.getMinutes();
+    function getCurrentMinutes() {
+        const now = new Date();
+        return now.getHours() * 60 + now.getMinutes();
     }
 
-    // РОЗМІТКА ОСІ X
-    const maxHour = Math.ceil(maxX/60);
-
-    const tickvals = Array.from({length:maxHour+1},(_,i)=>i*60);
-    const ticktext = Array.from({length:maxHour+1},(_,i)=>`${i.toString().padStart(2,"0")}:00`);
+    // 🔹 ОСЬ X та червона лінія "зараз" прив’язані до maxX
+    const maxHour  = Math.ceil(maxX / 60);
+    const tickvals = Array.from({ length: maxHour + 1 }, (_, i) => i * 60);
+    const ticktext = Array.from({ length: maxHour + 1 }, (_, i) =>
+        `${i.toString().padStart(2,"0")}:00`
+    );
 
     const currentInitial = Math.min(getCurrentMinutes(), maxX);
 
     const layout = {
-        showlegend:false,
-        xaxis:{
-            title:"Час",
-            range:[0,maxX],
+        showlegend: false,
+        xaxis: {
+            title: "Час",
+            range: [0, maxX],     // 👈 тут стискаємо діапазон
             tickvals: tickvals,
             ticktext: ticktext
         },
-        yaxis:{
-            title:"Групи",
+        yaxis: {
+            title: "Групи",
             type: "category",
             categoryorder: "array",
             categoryarray: groups
         },
-        shapes:[{
-            type:"line",
-            x0:currentInitial,
-            x1:currentInitial,
-            y0:-1,
-            y1:groups.length,
-            line:{color:"red",width:2,dash:"dash"}
+        shapes: [{
+            type: "line",
+            x0: currentInitial,
+            x1: currentInitial,
+            y0: -1,
+            y1: groups.length,
+            line: { color: "red", width: 2, dash: "dash" }
         }]
     };
 
     Plotly.newPlot("chart", traces, layout);
 
-    // РУХ ЧЕРВОНОЇ ЛІНІЇ
-    setInterval(()=>{
-        const current=Math.min(getCurrentMinutes(),maxX);
-        Plotly.relayout("chart",{
-            "shapes[0].x0":current,
-            "shapes[0].x1":current
+    // 🔹 Оновлення червоної лінії раз на хвилину, але в межах maxX
+    setInterval(() => {
+        const current = Math.min(getCurrentMinutes(), maxX);
+        Plotly.relayout("chart", {
+            "shapes[0].x0": current,
+            "shapes[0].x1": current
         });
-    },60000);
+    }, 60000);
 }
 
-async function init(){
+async function init() {
     await loadInfo();
     await loadChart();
 }
