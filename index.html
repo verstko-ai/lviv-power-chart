@@ -120,7 +120,7 @@ async function loadChart() {
         showlegend:false,
         xaxis:{
             title:"Час",
-            type: "linear",
+            type:"linear",
             range:[0,1440],
             tickvals:Array.from({length:25},(_,i)=>i*60),
             ticktext:Array.from({length:25},(_,i)=>`${i}:00`)
@@ -158,5 +158,6 @@ init();
 </script>
 </body>
 </html>
+
 
 
