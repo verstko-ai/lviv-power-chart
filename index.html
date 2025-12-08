@@ -60,15 +60,18 @@ async function loadChart() {
     const groups  = [];
     const outages = {};
 
-    // 1. ЧИТАЄМО ІНТЕРВАЛИ ТІЛЬКИ З ДРУГОГО СТОВПЦЯ (як в оригіналі)
+    // 1. Зчитуємо ВСІ інтервали (якщо їх рознесли по кількох стовпцях – теж зберемо)
     for (let i = 0; i < rows.length; i++) {
-        const group = rows[i][0];
+        const row   = rows[i];
+        const group = row[0];
         groups.push(group);
 
-        // тут очікується строка типу: "00:00-02:00, 06:00-08:00, 12:00-14:00"
-        const intervalsStr = rows[i][1] || "";
+        // Беремо всі стовпчики, починаючи з другого, і склеюємо через кому
+        const intervalsRaw = row
+            .slice(1)
+            .join(","); // тепер не важливо, один стовпець з інтервалами чи декілька
 
-        const intervals = intervalsStr
+        const intervals = intervalsRaw
             .split(",")
             .map(s => s.trim())
             .filter(s => s.length > 0);
@@ -79,8 +82,8 @@ async function loadChart() {
         });
     }
 
-    // 2. ЗНАХОДИМО ГЛОБАЛЬНИЙ МАКСИМУМ КІНЦЮ ІНТЕРВАЛІВ
-    const STEP = 5; // крок 5 хвилин
+    // 2. Знаходимо глобальний максимум закінчення серед усіх груп
+    const STEP = 5; // прив'язка до 5 хвилин
     let globalMaxEnd = 0;
 
     groups.forEach(group => {
@@ -90,7 +93,7 @@ async function loadChart() {
         });
     });
 
-    // Якщо з якоїсь причини немає жодного інтервалу — перестраховка на повну добу
+    // Якщо раптом даних немає – страхуємось 24 годинами
     if (globalMaxEnd === 0) {
         globalMaxEnd = 1440;
     }
@@ -100,7 +103,7 @@ async function loadChart() {
 
     const traces = [];
 
-    // 3. БУДУЄМО ЛІНІЇ ДЛЯ КОЖНОЇ ГРУПИ (ЛОГІКА ТА Ж САМА, ЩО В ТВОЄМУ ПЕРШОМУ РОБОЧОМУ ВАРІАНТІ)
+    // 3. Будуємо трейси
     groups.forEach(group => {
         let last = 0;
         const intervals = outages[group];
@@ -109,7 +112,7 @@ async function loadChart() {
             const start = toMinutes(startStr);
             const end   = toMinutes(endStr);
 
-            // Ділянка з електроенергією до відключення
+            // Ділянка з електрикою ДО відключення
             if (start > last) {
                 traces.push({
                     x: [last, start],
@@ -122,7 +125,7 @@ async function loadChart() {
                 });
             }
 
-            // Відключення
+            // Власне відключення
             traces.push({
                 x: [start, end],
                 y: [group, group],
@@ -136,7 +139,7 @@ async function loadChart() {
             last = end;
         });
 
-        // Хвіст з електроенергією після останнього відключення — ДО maxX
+        // "Хвіст" з електрикою після останнього відключення – до maxX
         if (last < maxX) {
             traces.push({
                 x: [last, maxX],
@@ -155,7 +158,7 @@ async function loadChart() {
         return now.getHours() * 60 + now.getMinutes();
     }
 
-    // 4. НАЛАШТОВУЄМО ВІСЬ X ТА ЧЕРВОНУ ЛІНІЮ "ЗАРАЗ"
+    // 4. Налаштування осі X та червоної лінії "зараз"
     const maxHour  = Math.ceil(maxX / 60);
     const tickvals = Array.from({ length: maxHour + 1 }, (_, i) => i * 60);
     const ticktext = Array.from({ length: maxHour + 1 }, (_, i) =>
@@ -190,7 +193,7 @@ async function loadChart() {
 
     Plotly.newPlot("chart", traces, layout);
 
-    // 5. ОНОВЛЮЄМО ПОЗИЦІЮ ЧЕРВОНОЇ ЛІНІЇ ЩОХВИЛИНИ (але не далі за maxX)
+    // 5. Оновлення червоної лінії раз на хвилину (але не далі maxX)
     setInterval(() => {
         const current = Math.min(getCurrentMinutes(), maxX);
         Plotly.relayout("chart", {
