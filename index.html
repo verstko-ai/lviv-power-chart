@@ -51,7 +51,6 @@ async function fetchCSV(url) {
 }
 
 function parseCSV(text) {
-    // Ця функція коректно парсить CSV, розділяючи рядки на масив масивів.
     return text.trim().split("\n").map(row => row.split(",").map(cell => cell.replace(/^"|"$/g,'').trim()));
 }
 
@@ -69,28 +68,27 @@ async function loadChart() {
     const groups = [];
     const outages = {};
     
-    // *** КЛЮЧОВЕ ВИПРАВЛЕННЯ: Ітерація по всіх рядках і перевірка на валідність ***
-    // Використовуємо .forEach для кращої читабельності і перевіряємо, чи є дані
+    // Ітерація по всіх рядках і перевірка на валідність
     rows.forEach(row => {
         const group = row[0];
-        const intervalsStr = row[1]; // Це має бути рядок "00:00-01:30,05:00-08:30,..."
+        const intervalsStr = row[1];
 
-        // Якщо назва групи або дані інтервалів відсутні, ігноруємо рядок
-        if (!group || !intervalsStr) return; 
-
-        // Якщо це заголовок (наприклад, "Група", "Інтервали"), ігноруємо його
-        // Це проста перевірка, яка часто працює для заголовків.
-        if (group === "Група" || group === "Group") return; 
+        if (!group || !intervalsStr || group === "Група" || group === "Group") return; 
 
         groups.push(group);
         
-        // Розбиваємо рядок з інтервалами на окремі елементи
-        const intervals = intervalsStr.split(",").map(s => s.trim());
+        // *** ПОСИЛЕНИЙ ПАРСИНГ: Видаляємо всі пробіли та розбиваємо ***
+        const cleanIntervalsStr = intervalsStr.replace(/\s/g, ''); // Видаляємо всі пробіли
+        const intervals = cleanIntervalsStr.split(",").filter(s => s.includes('-')); // Фільтруємо невалідні
+        
+        // *** ДІАГНОСТИКА: Перевірте консоль браузера! ***
+        if (group === "1.1") {
+            console.log(`Група ${group} знайдено інтервалів: ${intervals.length}. Дані:`, intervals);
+        }
         
         outages[group] = intervals.map(interval=>{
             let [start,end] = interval.split("-").map(s=>s.trim()); 
             
-            // Якщо час закінчення 00:00, ми позначаємо його як 24:00.
             if (end === "00:00") end = "24:00"; 
             
             return [start,end]; 
@@ -111,7 +109,7 @@ async function loadChart() {
             const start = toMinutes(startStr); // Хвилини
             const end = toMinutes(endStr);   // Хвилини
             
-            // Якщо інтервал невалідний (start >= end), ігноруємо його
+            // Якщо інтервал невалідний (start >= end)
             if (start >= end && end !== 1440) return;
 
             // 1. Світло є (від last до start)
@@ -138,7 +136,7 @@ async function loadChart() {
                 showlegend:false
             });
 
-            // *** ГОЛОВНЕ ВИПРАВЛЕННЯ: last має точно дорівнювати кінцю останнього інтервалу ***
+            // *** ГАРАНТУЄМО ОНОВЛЕННЯ ЗМІННОЇ last ***
             last = end; 
         });
 
