@@ -2,161 +2,115 @@
 <html lang="uk">
 <head>
     <meta charset="UTF-8">
-    <title>Графік відключень електроенергії</title>
-    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Графік відключень</title>
+
     <style>
         body {
             font-family: Arial, sans-serif;
-            margin: 20px;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
             background: #fafafa;
         }
-        h1 {
+        h2 {
             margin-bottom: 5px;
         }
-        #chart {
+        #updated {
+            color: #555;
+            margin-bottom: 20px;
+        }
+        canvas {
             width: 100%;
-            max-width: 1400px;
-            height: 800px;
+            height: 400px;
         }
     </style>
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
+
 <body>
 
-<h1>Графік погодинних відключень на 08.12.2025</h1>
-<p><b>Оновлено: 19:17 07.12.2025</b></p>
-
-<div id="chart"></div>
+<h2 id="title">Завантаження...</h2>
+<div id="updated"></div>
+<canvas id="chart"></canvas>
 
 <script>
-// Новий графік відключень
-const outages = {
-    "Група 1.1": [["00:00", "01:30"], ["05:00", "08:30"], ["12:00", "19:00"], ["22:30", "24:00"]],
-    "Група 1.2": [["05:00", "12:00"], ["15:30", "22:30"]],
-    "Група 2.1": [["00:00", "01:30"], ["06:00", "12:00"], ["15:30", "22:00"]],
-    "Група 2.2": [["05:00", "08:30"], ["12:00", "19:00"], ["22:30", "24:00"]],
-    "Група 3.1": [["01:30", "05:00"], ["08:30", "15:30"], ["19:00", "24:00"]],
-    "Група 3.2": [["00:00", "02:00"], ["08:00", "12:00"], ["15:30", "22:30"]],
-    "Група 4.1": [["03:00", "08:30"], ["12:00", "19:00"], ["22:30", "24:00"]],
-    "Група 4.2": [["01:30", "08:30"], ["12:00", "19:00"], ["22:30", "24:00"]],
-    "Група 5.1": [["00:00", "05:00"], ["08:30", "15:30"], ["19:00", "22:30"]],
-    "Група 5.2": [["00:00", "03:00"], ["08:30", "15:30"], ["19:00", "22:30"]],
-    "Група 6.1": [["00:00", "05:00"], ["08:30", "15:30"], ["19:00", "22:30"]],
-    "Група 6.2": [["05:00", "12:00"], ["15:30", "20:00"], ["22:30", "24:00"]]
-};
+    // CSV URLs
+    const CSV_INFO = "https://docs.google.com/spreadsheets/d/11sNa680oNGIDLCpeUJqkWd0gpxVIFz9gaZuop-hLE_8/export?format=csv&gid=0";
+    const CSV_DATA = "https://docs.google.com/spreadsheets/d/11sNa680oNGIDLCpeUJqkWd0gpxVIFz9gaZuop-hLE_8/export?format=csv&gid=1945313917";
 
-// Переведення часу у хвилини
-function toMinutes(t) {
-    const [h, m] = t.split(":").map(Number);
-    return h * 60 + m;
-}
-
-// Кольори
-const COLOR_POWER_ON = "#FFD700"; // жовтий
-const COLOR_POWER_OFF = "#000000"; // чорний
-
-let groups = Object.keys(outages);
-let traces = [];
-
-// Формування ліній
-groups.forEach((group) => {
-    const intervals = outages[group];
-
-    if (intervals.length === 0) {
-        traces.push({
-            x: [0, 1440],
-            y: [group, group],
-            mode: "lines",
-            line: { width: 18, color: COLOR_POWER_ON },
-            hoverinfo: "text",
-            text: `${group}: Електроенергія є`,
-            showlegend: false
-        });
-        return;
+    // Завантаження CSV з коректною підтримкою UTF-8
+    async function fetchCSV(url) {
+        const response = await fetch(url);
+        const buffer = await response.arrayBuffer();
+        return new TextDecoder("utf-8").decode(buffer);
     }
 
-    let last = 0;
+    // Парсер CSV
+    function parseCSV(text) {
+        return text.trim().split("\n").map(row =>
+            row.split(",").map(cell => cell.replace(/^"|"$/g, "").trim())
+        );
+    }
 
-    intervals.forEach((interval) => {
-        const start = toMinutes(interval[0]);
-        const end = toMinutes(interval[1]);
+    async function loadInfo() {
+        const csv = await fetchCSV(CSV_INFO);
+        const rows = parseCSV(csv);
 
-        if (start > last) {
-            traces.push({
-                x: [last, start],
-                y: [group, group],
-                mode: "lines",
-                line: { width: 18, color: COLOR_POWER_ON },
-                hoverinfo: "text",
-                text: `${group}: Електроенергія є`,
-                showlegend: false
+        // Структура A1:
+        // A1: Графік погодинних відключень на <дата>
+        // A2: Інформація станом на <дата час>
+        document.getElementById("title").textContent = rows[0][0];
+        document.getElementById("updated").textContent = rows[1][0];
+    }
+
+    async function loadChart() {
+        const csv = await fetchCSV(CSV_DATA);
+        const rows = parseCSV(csv);
+
+        const labels = rows[0].slice(1); // часи 00:00–23:00
+        const datasets = [];
+
+        for (let i = 1; i < rows.length; i++) {
+            const group = rows[i][0];
+            const values = rows[i].slice(1).map(v => v === "1" ? 1 : 0);
+
+            datasets.push({
+                label: group,
+                data: values,
+                borderWidth: 2,
+                fill: false
             });
         }
 
-        traces.push({
-            x: [start, end],
-            y: [group, group],
-            mode: "lines",
-            line: { width: 18, color: COLOR_POWER_OFF },
-            hoverinfo: "text",
-            text: `${group}: Відключення ${interval[0]}–${interval[1]}`,
-            showlegend: false
-        });
+        const ctx = document.getElementById("chart").getContext("2d");
 
-        last = end;
-    });
-
-    if (last < 1440) {
-        traces.push({
-            x: [last, 1440],
-            y: [group, group],
-            mode: "lines",
-            line: { width: 18, color: COLOR_POWER_ON },
-            hoverinfo: "text",
-            text: `${group}: Електроенергія є`,
-            showlegend: false
+        new Chart(ctx, {
+            type: "line",
+            data: { labels, datasets },
+            options: {
+                responsive: true,
+                scales: {
+                    y: {
+                        ticks: {
+                            callback: val => val === 1 ? "Вимкн." : ""
+                        },
+                        min: 0,
+                        max: 1
+                    }
+                }
+            }
         });
     }
-});
 
-// Поточний час
-function getCurrentMinutes() {
-    const now = new Date();
-    return now.getHours() * 60 + now.getMinutes();
-}
+    async function init() {
+        await loadInfo();
+        await loadChart();
+    }
 
-const layout = {
-    title: "Відключення електроенергії по всіх групах",
-    showlegend: false,
-    xaxis: {
-        title: "Час",
-        range: [0, 1440],
-        tickvals: Array.from({ length: 25 }, (_, i) => i * 60),
-        ticktext: Array.from({ length: 25 }, (_, i) => `${i}:00`)
-    },
-    yaxis: { title: "Групи" },
-    shapes: [
-        {
-            type: "line",
-            x0: getCurrentMinutes(),
-            x1: getCurrentMinutes(),
-            y0: -1,
-            y1: groups.length,
-            line: { color: "red", width: 2, dash: "dash" }
-        }
-    ]
-};
-
-Plotly.newPlot("chart", traces, layout);
-
-// Оновлення кожну хвилину
-setInterval(() => {
-    const current = getCurrentMinutes();
-    Plotly.relayout("chart", {
-        "shapes[0].x0": current,
-        "shapes[0].x1": current
-    });
-}, 60000);
+    init();
 </script>
-
 </body>
 </html>
