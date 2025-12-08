@@ -2,7 +2,7 @@
 <html lang="uk">
 <head>
 <meta charset="UTF-8">
-<title>Графік відключень електроенергії (10-хвилинні слоти)</title>
+<title>Графік відключень електроенергії</title>
 <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
 <style>
     body { font-family: Arial, sans-serif; margin: 20px; background: #fafafa; }
@@ -21,32 +21,12 @@
 const CSV_INFO = "https://docs.google.com/spreadsheets/d/11sNa680oNGIDLCpeUJqkWd0gpxVIFz9gaZuop-hLE_8/export?format=csv&gid=0";
 const CSV_DATA = "https://docs.google.com/spreadsheets/d/11sNa680oNGIDLCpeUJqkWd0gpxVIFz9gaZuop-hLE_8/export?format=csv&gid=1945313917";
 
-const COLOR_POWER_OFF = "#000000"; 
-// *** НОВА КОНСТАНТА: Кількість хвилин в одному слоті ***
-const SLOT_DURATION = 10;
-// *** НОВА КОНСТАНТА: Максимальна кількість слотів (1440 / 10 = 144) ***
-const MAX_SLOTS = 1440 / SLOT_DURATION; 
+const COLOR_POWER_ON = "#FFD700";  // жовтий
+const COLOR_POWER_OFF = "#000000"; // чорний
 
-// Конвертує HH:MM у кількість 10-хвилинних слотів (0 - 144)
-function toSlots(t) {
-    if (t === "24:00") { 
-        return MAX_SLOTS; // 144 слоти
-    }
-    const [h, m] = t.split(":").map(Number);
-    const minutes = h * 60 + m;
-    // Округлюємо, щоб мінімізувати помилки, хоча для 10хв цього не повинно бути
-    return Math.round(minutes / SLOT_DURATION); 
-}
-
-// Конвертує кількість слотів у рядок часу HH:MM (для hover)
-function slotsToTimeStr(slots) {
-    const minutes = slots * SLOT_DURATION;
-    if (minutes >= 1440) return "24:00";
-    const h = Math.floor(minutes / 60);
-    const m = minutes % 60;
-    const hourStr = String(h).padStart(2, '0');
-    const minuteStr = String(m).padStart(2, '0');
-    return `${hourStr}:${minuteStr}`;
+function toMinutes(t) {
+    const [h,m] = t.split(":").map(Number);
+    return h*60 + m;
 }
 
 async function fetchCSV(url) {
@@ -56,17 +36,14 @@ async function fetchCSV(url) {
 }
 
 function parseCSV(text) {
-    return text.trim().split("\n");
+    return text.trim().split("\n").map(row => row.split(",").map(cell => cell.replace(/^"|"$/g,'').trim()));
 }
 
 async function loadInfo() {
     const csv = await fetchCSV(CSV_INFO);
     const rows = parseCSV(csv);
-    const infoRow = rows[0].split(",").map(cell => cell.replace(/^"|"$/g,'').trim());
-    const updatedRow = rows[1].split(",").map(cell => cell.replace(/^"|"$/g,'').trim());
-    
-    document.getElementById("title").textContent = `Графік погодинних відключень на ${infoRow[1]}`;
-    document.getElementById("updated").textContent = `Інформація станом на ${updatedRow[1]}`;
+    document.getElementById("title").textContent = `Графік погодинних відключень на ${rows[0][1]}`;
+    document.getElementById("updated").textContent = `Інформація станом на ${rows[1][1]}`;
 }
 
 async function loadChart() {
@@ -75,97 +52,77 @@ async function loadChart() {
 
     const groups = [];
     const outages = {};
-    
-    rows.forEach(row => {
-        const firstCommaIndex = row.indexOf(',');
-        if (firstCommaIndex === -1) return;
 
-        let group = row.substring(0, firstCommaIndex).trim();
-        let intervalsStr = row.substring(firstCommaIndex + 1).replace(/^"|"$/g, '').trim(); 
-        
-        if (!group || !intervalsStr || group === "Група" || group === "Group") return; 
-
-        const cleanIntervalsStr = intervalsStr.replace(/\s/g, ''); 
-        const intervals = cleanIntervalsStr.split(",").filter(s => s.includes('-') && s.length > 0); 
-        
-        if (intervals.length === 0) return;
-        
+    for(let i=0;i<rows.length;i++){
+        const group = rows[i][0];
         groups.push(group);
+        const intervals = rows[i][1].split(",").map(s=>s.trim());
         outages[group] = intervals.map(interval=>{
-            let [start,end] = interval.split("-").map(s=>s.trim()); 
-            
-            if (end === "00:00") end = "24:00"; 
-            
-            return [start,end]; 
+            const [start,end] = interval.split("-").map(s=>s.trim()); // <- виправлено дефіс
+            return [start,end];
         });
-    });
-    
-    if (groups.length === 0) {
-        document.getElementById("chart").innerHTML = "<div>Помилка: Не знайдено жодної групи даних. Перевірте формат CSV.</div>";
-        return;
     }
 
     const traces = [];
 
     groups.forEach(group=>{
-        
+        let last = 0;
         const intervals = outages[group];
 
         intervals.forEach(interval=>{
-            const startStr = interval[0];
-            const endStr = interval[1];
-            
-            // *** КОНВЕРТАЦІЯ У СЛОТИ ***
-            const startSlot = toSlots(startStr);
-            let endSlot = toSlots(endStr);
-            
-            if (startSlot >= endSlot && endStr !== "24:00") return;
+            const start = toMinutes(interval[0]);
+            const end = toMinutes(interval[1]);
 
-            // *** ВИПРАВЛЕННЯ ГРАНИЧНОЇ ТОЧКИ 144 (24:00) ***
-            // Якщо кінець рівно 144, встановлюємо його на 143.999, щоб він був усередині range:[0, 144]
-            const finalEndSlot = (endSlot === MAX_SLOTS) ? (MAX_SLOTS - 0.001) : endSlot;
+            if(start>last){
+                traces.push({
+                    x:[last,start],
+                    y:[group,group],
+                    mode:"lines",
+                    line:{width:18,color:COLOR_POWER_ON},
+                    hoverinfo:"text",
+                    text:`${group}: Електроенергія є`,
+                    showlegend:false
+                });
+            }
 
-            // Відключення (чорна смуга)
             traces.push({
-                x:[startSlot,finalEndSlot], 
+                x:[start,end],
                 y:[group,group],
                 mode:"lines",
                 line:{width:18,color:COLOR_POWER_OFF},
                 hoverinfo:"text",
-                text:`${group}: Відключення ${startStr}–${endStr === "24:00" ? "00:00" : endStr}`,
-                showlegend:false,
-                z: 1 
+                text:`${group}: Відключення ${interval[0]}–${interval[1]}`,
+                showlegend:false
             });
+
+            last=end;
         });
+
+        if(last<1440){
+            traces.push({
+                x:[last,1440],
+                y:[group,group],
+                mode:"lines",
+                line:{width:18,color:COLOR_POWER_ON},
+                hoverinfo:"text",
+                text:`${group}: Електроенергія є`,
+                showlegend:false
+            });
+        }
     });
 
-    function getCurrentSlot(){
+    function getCurrentMinutes(){
         const now=new Date();
-        const minutes = now.getHours()*60 + now.getMinutes() + (now.getSeconds() / 60); 
-        // Конвертуємо поточний час у слоти
-        return minutes / SLOT_DURATION;
+        return now.getHours()*60 + now.getMinutes();
     }
-    
-    // *** НАЛАШТУВАННЯ ОСІ X (СЛОТИ) ***
-    // 25 міток (від 00:00 до 24:00), кожні 6 слотів = 60 хвилин
-    const tickVals = Array.from({length: 25}, (_, i) => i * 6); 
-    
-    const tickText = Array.from({length: 25}, (_, i) => {
-        const hour = i;
-        if (hour === 24) return "24:00";
-        return `${String(hour).padStart(2, '0')}:00`;
-    });
-
 
     const layout = {
         showlegend:false,
         xaxis:{
             title:"Час",
-            type: "linear", 
-            range:[0, MAX_SLOTS], // Діапазон 0 - 144
-            tickvals: tickVals, 
-            ticktext: tickText, 
-            tickangle: 0 
+            range:[0,1440],
+            tickvals:Array.from({length:25},(_,i)=>i*60),
+            ticktext:Array.from({length:25},(_,i)=>`${i}:00`)
         },
         yaxis:{
             title:"Групи",
@@ -175,9 +132,8 @@ async function loadChart() {
         },
         shapes:[{
             type:"line",
-            // *** ВИКОРИСТАННЯ ПОТОЧНОГО СЛОТА ***
-            x0:getCurrentSlot(),
-            x1:getCurrentSlot(),
+            x0:getCurrentMinutes(),
+            x1:getCurrentMinutes(),
             y0:-1,
             y1:groups.length,
             line:{color:"red",width:2,dash:"dash"}
@@ -187,9 +143,9 @@ async function loadChart() {
     Plotly.newPlot("chart",traces,layout);
 
     setInterval(()=>{
-        const current=getCurrentSlot();
+        const current=getCurrentMinutes();
         Plotly.relayout("chart",{"shapes[0].x0":current,"shapes[0].x1":current});
-    },10000); 
+    },60000);
 }
 
 async function init(){
@@ -201,3 +157,4 @@ init();
 </script>
 </body>
 </html>
+
