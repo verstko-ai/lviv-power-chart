@@ -24,13 +24,12 @@ const CSV_DATA = "https://docs.google.com/spreadsheets/d/11sNa680oNGIDLCpeUJqkWd
 const COLOR_POWER_ON = "#FFD700"; // жовтий
 const COLOR_POWER_OFF = "#000000"; // чорний
 
-// *** ФІНАЛЬНА КОРЕКЦІЯ toMinutes ***
+// Функція для конвертації часу в хвилини (0-1440)
 function toMinutes(t) {
-    // Якщо кінець інтервалу був замінений на 24:00
     if (t === "24:00") { 
         return 1440; 
     }
-    // Стандартний парсинг для HH:MM. 00:00 -> 0 хвилин.
+    // 00:00 -> 0 хвилин
     const [h, m] = t.split(":").map(Number);
     return h * 60 + m;
 }
@@ -52,6 +51,7 @@ async function fetchCSV(url) {
 }
 
 function parseCSV(text) {
+    // Ця функція коректно парсить CSV, розділяючи рядки на масив масивів.
     return text.trim().split("\n").map(row => row.split(",").map(cell => cell.replace(/^"|"$/g,'').trim()));
 }
 
@@ -68,20 +68,34 @@ async function loadChart() {
 
     const groups = [];
     const outages = {};
+    
+    // *** КЛЮЧОВЕ ВИПРАВЛЕННЯ: Ітерація по всіх рядках і перевірка на валідність ***
+    // Використовуємо .forEach для кращої читабельності і перевіряємо, чи є дані
+    rows.forEach(row => {
+        const group = row[0];
+        const intervalsStr = row[1]; // Це має бути рядок "00:00-01:30,05:00-08:30,..."
 
-    for(let i=0;i<rows.length;i++){
-        const group = rows[i][0];
+        // Якщо назва групи або дані інтервалів відсутні, ігноруємо рядок
+        if (!group || !intervalsStr) return; 
+
+        // Якщо це заголовок (наприклад, "Група", "Інтервали"), ігноруємо його
+        // Це проста перевірка, яка часто працює для заголовків.
+        if (group === "Група" || group === "Group") return; 
+
         groups.push(group);
-        const intervals = rows[i][1].split(",").map(s=>s.trim());
+        
+        // Розбиваємо рядок з інтервалами на окремі елементи
+        const intervals = intervalsStr.split(",").map(s => s.trim());
+        
         outages[group] = intervals.map(interval=>{
             let [start,end] = interval.split("-").map(s=>s.trim()); 
             
-            // Якщо час закінчення 00:00, ми позначаємо його як 24:00 для обробки 1440.
+            // Якщо час закінчення 00:00, ми позначаємо його як 24:00.
             if (end === "00:00") end = "24:00"; 
             
             return [start,end]; 
         });
-    }
+    });
 
     const traces = [];
 
@@ -89,14 +103,18 @@ async function loadChart() {
         let last = 0; // Хвилини (починаємо з 00:00)
         const intervals = outages[group];
 
+        // *** ЦИКЛ ОБРОБКИ ІНТЕРВАЛІВ ДЛЯ КОЖНОЇ ГРУПИ ***
         intervals.forEach(interval=>{
             const startStr = interval[0];
             const endStr = interval[1];
             
             const start = toMinutes(startStr); // Хвилини
             const end = toMinutes(endStr);   // Хвилини
+            
+            // Якщо інтервал невалідний (start >= end), ігноруємо його
+            if (start >= end && end !== 1440) return;
 
-            // Світло є (від last до start)
+            // 1. Світло є (від last до start)
             if(start > last){
                 traces.push({
                     x:[last,start],
@@ -104,28 +122,27 @@ async function loadChart() {
                     mode:"lines",
                     line:{width:18,color:COLOR_POWER_ON},
                     hoverinfo:"text",
-                    // Форматування hover тексту: якщо last=0, показуємо 00:00
                     text:`${group}: Електроенергія є ${last === 0 ? "00:00" : minutesToTimeStr(last)}–${startStr}`,
                     showlegend:false
                 });
             }
 
-            // Відключення (від start до end)
+            // 2. Відключення (від start до end)
             traces.push({
                 x:[start,end],
                 y:[group,group],
                 mode:"lines",
                 line:{width:18,color:COLOR_POWER_OFF},
                 hoverinfo:"text",
-                // Якщо кінець 24:00, показуємо 00:00 у hover
                 text:`${group}: Відключення ${startStr}–${endStr === "24:00" ? "00:00" : endStr}`,
                 showlegend:false
             });
 
-            last=end; // last тепер у хвилинах
+            // *** ГОЛОВНЕ ВИПРАВЛЕННЯ: last має точно дорівнювати кінцю останнього інтервалу ***
+            last = end; 
         });
 
-        // Світло є до кінця дня (від last до 1440)
+        // 3. Світло є до кінця дня (від last до 1440)
         if(last < 1440){
             traces.push({
                 x:[last,1440],
@@ -141,7 +158,6 @@ async function loadChart() {
 
     function getCurrentMinutes(){
         const now=new Date();
-        // Додаємо секунди для плавного руху, якщо це потрібно
         return now.getHours()*60 + now.getMinutes() + (now.getSeconds() / 60); 
     }
     
@@ -160,7 +176,7 @@ async function loadChart() {
         xaxis:{
             title:"Час",
             type: "linear", 
-            range:[0,1440], // Жорстко встановлюємо діапазон 0-1440
+            range:[0,1440], 
             tickvals: tickVals, 
             ticktext: tickText, 
             tickangle: 0 
