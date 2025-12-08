@@ -21,7 +21,6 @@
 const CSV_INFO = "https://docs.google.com/spreadsheets/d/11sNa680oNGIDLCpeUJqkWd0gpxVIFz9gaZuop-hLE_8/export?format=csv&gid=0";
 const CSV_DATA = "https://docs.google.com/spreadsheets/d/11sNa680oNGIDLCpeUJqkWd0gpxVIFz9gaZuop-hLE_8/export?format=csv&gid=1945313917";
 
-// Залишаємо лише колір для відключень
 const COLOR_POWER_OFF = "#000000"; 
 const EPSILON = 0.001; 
 
@@ -78,8 +77,12 @@ async function loadChart() {
         
         if (!group || !intervalsStr || group === "Група" || group === "Group") return; 
 
+        // *** ВИПРАВЛЕННЯ: Посилене очищення та фільтрація інтервалів ***
         const cleanIntervalsStr = intervalsStr.replace(/\s/g, ''); 
-        const intervals = cleanIntervalsStr.split(",").filter(s => s.includes('-')); 
+        // 1. Розділяємо
+        const rawIntervals = cleanIntervalsStr.split(",");
+        // 2. Фільтруємо лише валідні інтервали (мають містити дефіс)
+        const intervals = rawIntervals.filter(s => s.includes('-') && s.length > 0); 
         
         if (intervals.length === 0) return;
         
@@ -113,9 +116,8 @@ async function loadChart() {
             
             if (start >= end && end !== 1440) return;
 
-            // *** ВИДАЛЕНО: БЛОК "СВІТЛО Є" (ЖОВТИЙ) ***
-
             // Відключення (чорна смуга)
+            // Використовуємо EPSILON для трасування, що закінчуються рівно на 1440
             const finalEnd = (end === 1440) ? (end + EPSILON) : end;
 
             traces.push({
@@ -126,11 +128,9 @@ async function loadChart() {
                 hoverinfo:"text",
                 text:`${group}: Відключення ${startStr}–${endStr === "24:00" ? "00:00" : endStr}`,
                 showlegend:false,
-                z: 1 // Вищий Z-індекс для чорного кольору
+                z: 1 
             });
         });
-        
-        // *** ВИДАЛЕНО: БЛОК "СВІТЛО Є ДО КІНЦЯ ДНЯ" (ЖОВТИЙ) ***
     });
 
     function getCurrentMinutes(){
@@ -163,7 +163,6 @@ async function loadChart() {
             categoryorder: "array",
             categoryarray: groups
         },
-        // Малюємо червону лінію поточного часу
         shapes:[{
             type:"line",
             x0:getCurrentMinutes(),
@@ -175,7 +174,6 @@ async function loadChart() {
     };
 
     Plotly.newPlot("chart",traces,layout);
-    // 
 
     setInterval(()=>{
         const current=getCurrentMinutes();
