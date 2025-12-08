@@ -24,7 +24,6 @@ const CSV_DATA = "https://docs.google.com/spreadsheets/d/11sNa680oNGIDLCpeUJqkWd
 const COLOR_POWER_ON = "#FFD700"; // жовтий
 const COLOR_POWER_OFF = "#000000"; // чорний
 
-// Функція для конвертації часу в хвилини (0-1440)
 function toMinutes(t) {
     if (t === "24:00") { 
         return 1440; 
@@ -33,7 +32,6 @@ function toMinutes(t) {
     return h * 60 + m;
 }
 
-// Допоміжна функція для перетворення хвилин у рядок часу HH:MM
 function minutesToTimeStr(minutes) {
     if (minutes === 1440) return "24:00";
     const h = Math.floor(minutes / 60);
@@ -49,9 +47,9 @@ async function fetchCSV(url) {
     return new TextDecoder("utf-8").decode(buffer);
 }
 
-// *** ВИДАЛЕНО: Стандартний parseCSV, замінено на прямий парсинг у loadChart ***
+// Функція тепер просто розділяє текст на рядки
 function parseCSV(text) {
-    return text.trim().split("\n"); // Просто розділяємо на рядки
+    return text.trim().split("\n");
 }
 
 async function loadInfo() {
@@ -67,38 +65,32 @@ async function loadInfo() {
 
 async function loadChart() {
     const csv = await fetchCSV(CSV_DATA);
-    const rows = parseCSV(csv); // Отримуємо масив рядків
+    const rows = parseCSV(csv);
 
     const groups = [];
     const outages = {};
     
     // Ітерація по всіх рядках даних
     rows.forEach(row => {
-        // *** КЛЮЧОВЕ ВИПРАВЛЕННЯ: Надійний парсинг двох колонок ***
-        // Використовуємо регулярний вираз для розділення: 
-        // 1. Назва групи (будь-що до першої коми)
-        // 2. Інтервали (будь-що після першої коми, видаляючи зовнішні лапки)
-        
-        const match = row.match(/^([^,]+),?(.+)$/); // Шукаємо "Група,"Інтервали"
-        if (!match) return; 
+        // *** ВИПРАВЛЕННЯ 1: Надійний парсинг двох колонок без regex ***
+        const firstCommaIndex = row.indexOf(',');
+        if (firstCommaIndex === -1) return; // Пропускаємо, якщо немає роздільника
 
-        let group = match[1].trim(); // Назва групи
-        let intervalsStr = match[2].replace(/^"|"$/g, '').trim(); // Рядок інтервалів, очищений від лапок
+        let group = row.substring(0, firstCommaIndex).trim(); // Все до першої коми
+        // Все після першої коми, видаляємо зовнішні лапки та пробіли
+        let intervalsStr = row.substring(firstCommaIndex + 1).replace(/^"|"$/g, '').trim(); 
         
         // Фільтруємо заголовки та пусті дані
         if (!group || !intervalsStr || group === "Група" || group === "Group") return; 
 
-        groups.push(group);
-        
-        // Розбиваємо рядок з інтервалами на окремі елементи, видаляючи пробіли
+        // Розбиваємо рядок з інтервалами на окремі елементи
         const cleanIntervalsStr = intervalsStr.replace(/\s/g, ''); 
         const intervals = cleanIntervalsStr.split(",").filter(s => s.includes('-')); 
         
-        // *** ДІАГНОСТИКА: Перевірте консоль браузера! ***
-        if (group === "1.1") {
-            console.log(`Група ${group} знайдено інтервалів: ${intervals.length}. Дані:`, intervals);
-        }
+        // *** ВИПРАВЛЕННЯ 2: Ігноруємо групи, які не мають інтервалів (якщо помилка парсингу) ***
+        if (intervals.length === 0) return;
         
+        groups.push(group);
         outages[group] = intervals.map(interval=>{
             let [start,end] = interval.split("-").map(s=>s.trim()); 
             
@@ -106,11 +98,20 @@ async function loadChart() {
             
             return [start,end]; 
         });
+        
+        // *** ДІАГНОСТИКА ***
+        if (group === "1.1" || group === "6.2") {
+            console.log(`Група ${group} знайдено інтервалів: ${intervals.length}. Дані:`, intervals);
+        }
     });
+
+    // *** ДІАГНОСТИКА: Перевірка загальної кількості груп ***
+    console.log(`Загальна кількість знайдених груп: ${groups.length}. Список груп:`, groups);
     
-    // Якщо не знайдено жодної групи, можливо, є проблема з заголовками
+    // Якщо не знайдено жодної групи, виводимо помилку
     if (groups.length === 0) {
-        console.error("Не знайдено жодної групи даних. Перевірте формат CSV.");
+        document.getElementById("chart").innerHTML = "<div>Помилка: Не знайдено жодної групи даних. Перевірте формат CSV.</div>";
+        return;
     }
 
     const traces = [];
@@ -199,14 +200,14 @@ async function loadChart() {
             title:"Групи",
             type: "category",
             categoryorder: "array",
-            categoryarray: groups
+            categoryarray: groups // Використовуємо масив з усіма знайденими групами
         },
         shapes:[{
             type:"line",
             x0:getCurrentMinutes(),
             x1:getCurrentMinutes(),
             y0:-1,
-            y1:groups.length,
+            y1:groups.length, // Лінія від початку до кінця всіх груп
             line:{color:"red",width:2,dash:"dash"}
         }]
     };
