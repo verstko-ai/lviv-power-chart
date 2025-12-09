@@ -2,11 +2,11 @@ name: Update Power Schedule
 
 on:
   schedule:
-    - cron: '15 * * * *' # Запускати щогодини у 15 хвилин
-  workflow_dispatch:      # Дозволяє запустити кнопку вручну
+    - cron: '15 * * * *'
+  workflow_dispatch:
 
 permissions:
-  contents: write         # Дозвіл записувати файл назад у репозиторій
+  contents: write
 
 jobs:
   scrape-job:
@@ -27,15 +27,15 @@ jobs:
         run: node scrape.js
 
       - name: Save Result
+        run: |
+          git config --global user.name 'GitHub Action'
+          git config --global user.email 'action@github.com'
+          git add power_data.json || echo "No new file found"
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update schedule" && git push)
+
       - name: Upload Screenshot (Debug)
-        if: always() # Виконувати завжди, навіть якщо скрипт впав
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: debug-screenshots
           path: "*.png"
-        run: |
-          git config --global user.name 'GitHub Action'
-          git config --global user.email 'action@github.com'
-          git add power_data.json
-          # Якщо змін немає - не робити помилку, просто вийти
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update schedule" && git push)
