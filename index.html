@@ -19,25 +19,43 @@
 <div id="chart"></div>
 
 <script>
-// Налаштування кольорів для груп (світло Є)
-const GROUP_COLORS = {
-    '1': '#FFA500', // Помаранчевий
-    '2': '#32CD32', // Зелений
-    '3': '#1E90FF', // Синій
-    '4': '#9370DB', // Фіолетовий
-    '5': '#FF69B4', // Рожевий
-    '6': '#00CED1'  // Бірюзовий
-};
+// --- КОНФІГУРАЦІЯ ---
+const LINE_WIDTH = 45; 
 
-const COLOR_POWER_OFF = "#000000"; // Чорний (світла немає)
-const DEFAULT_COLOR   = "#FFD700"; // Жовтий (резерв)
+// Базові кольори (1-6). Якщо груп стане більше, кольори підуть по колу.
+const PALETTE = [
+    '#FFA500', // 1 - Помаранчевий
+    '#32CD32', // 2 - Зелений
+    '#1E90FF', // 3 - Синій
+    '#9370DB', // 4 - Фіолетовий
+    '#FF69B4', // 5 - Рожевий
+    '#00CED1'  // 6 - Бірюзовий
+];
 
-// --- НАЛАШТУВАННЯ ТОВЩИНИ ---
-const LINE_WIDTH = 45; // Було 18. Збільшили, щоб зменшити білі проміжки.
+const COLOR_POWER_OFF = "#000000"; 
 
+// Шаблон груп за замовчуванням (щоб графік не був пустим, коли світло є у всіх)
+const DEFAULT_TEMPLATE = [
+    "1.1", "1.2", 
+    "2.1", "2.2", 
+    "3.1", "3.2", 
+    "4.1", "4.2", 
+    "5.1", "5.2", 
+    "6.1", "6.2"
+];
+
+// Розумна функція кольору: працює навіть для Групи 7, 8, 99...
 function getGroupColor(groupName) {
-    const mainGroup = groupName.charAt(0); 
-    return GROUP_COLORS[mainGroup] || DEFAULT_COLOR;
+    // Намагаємось знайти першу цифру в назві групи
+    const match = groupName.match(/\d+/);
+    if (match) {
+        const num = parseInt(match[0]);
+        // (num - 1) % PALETTE.length гарантує, що ми завжди беремо колір із масиву (0..5)
+        // Наприклад, група 7 отримає той самий колір, що й група 1
+        return PALETTE[(num - 1) % PALETTE.length];
+    }
+    // Якщо в назві немає цифр (наприклад "Група А"), беремо перший колір
+    return PALETTE[0];
 }
 
 function toMinutes(t) {
@@ -55,126 +73,132 @@ async function loadPowerData() {
         const updateTime = json.updated_at_site || new Date(json.scan_date).toLocaleString('uk-UA');
         document.getElementById("updated").textContent = `Інформація станом на: ${updateTime}`;
 
-        const schedule = json.data;
-        const groups = Object.keys(schedule).sort(); 
+        const schedule = json.data || {};
+        
+        // --- ДИНАМІЧНЕ ФОРМУВАННЯ СПИСКУ ГРУП ---
+        // 1. Беремо всі групи, які знайшов робот
+        const foundGroups = Object.keys(schedule);
+        
+        // 2. Об'єднуємо їх з нашим шаблоном (Set автоматично прибирає дублікати)
+        // Це гарантує:
+        // - Якщо робот знайшов нову групу (7.1), вона додасться.
+        // - Якщо робот не знайшов стару (1.1), вона візьметься з шаблону.
+        let finalGroups = [...new Set([...DEFAULT_TEMPLATE, ...foundGroups])];
+        
+        // 3. Сортуємо (щоб йшли по порядку 1.1, 1.2, 2.1...)
+        finalGroups.sort();
+
         const traces = [];
 
-        groups.forEach(group => {
-            let last = 0;
+        finalGroups.forEach(group => {
             const intervalsStr = schedule[group] || []; 
             const groupColor = getGroupColor(group);
 
-            const outages = intervalsStr.map(interval => {
-                const [start, end] = interval.split("-").map(s => s.trim());
-                return [toMinutes(start), toMinutes(end)];
-            });
+            if (intervalsStr.length > 0) {
+                // Є ВІДКЛЮЧЕННЯ
+                let last = 0;
+                const outages = intervalsStr.map(interval => {
+                    const [start, end] = interval.split("-").map(s => s.trim());
+                    return [toMinutes(start), toMinutes(end)];
+                });
 
-            outages.forEach(([start, end]) => {
-                // СВІТЛО Є
-                if (start > last) {
-                    traces.push({
-                        x: [last, start],
-                        y: [group, group],
-                        mode: "lines",
-                        line: { width: LINE_WIDTH, color: groupColor }, // Використовуємо нову ширину
-                        hoverinfo: "text",
-                        text: `${group}: Електроенергія є`,
-                        showlegend: false,
-                        xaxis: 'x'
-                    });
+                outages.forEach(([start, end]) => {
+                    if (start > last) {
+                        // Світло Є
+                        traces.push(createTrace(group, last, start, groupColor, `Електроенергія є`));
+                    }
+                    // Світла НЕМАЄ
+                    traces.push(createTrace(group, start, end, COLOR_POWER_OFF, `Відключення ${formatTime(start)} – ${formatTime(end)}`));
+                    last = end;
+                });
+
+                if (last < 1440) {
+                    traces.push(createTrace(group, last, 1440, groupColor, `Електроенергія є`));
                 }
-
-                // ВІДКЛЮЧЕННЯ
-                traces.push({
-                    x: [start, end],
-                    y: [group, group],
-                    mode: "lines",
-                    line: { width: LINE_WIDTH, color: COLOR_POWER_OFF }, // Використовуємо нову ширину
-                    hoverinfo: "text",
-                    text: `${group}: Відключення ${formatTime(start)} – ${formatTime(end)}`,
-                    showlegend: false,
-                    xaxis: 'x'
-                });
-
-                last = end;
-            });
-
-            // Хвіст доби
-            if (last < 1440) {
-                traces.push({
-                    x: [last, 1440],
-                    y: [group, group],
-                    mode: "lines",
-                    line: { width: LINE_WIDTH, color: groupColor }, // Використовуємо нову ширину
-                    hoverinfo: "text",
-                    text: `${group}: Електроенергія є`,
-                    showlegend: false,
-                    xaxis: 'x'
-                });
+            } else {
+                // НЕМАЄ ВІДКЛЮЧЕНЬ (Суцільна смуга)
+                traces.push(createTrace(group, 0, 1440, groupColor, `Вимкнень не передбачено`));
             }
         });
 
-        const tickVals = Array.from({ length: 25 }, (_, i) => i * 60);
-        const tickText = Array.from({ length: 25 }, (_, i) => `${i}:00`);
-
-        const layout = {
-            showlegend: false,
-            // НИЖНЯ ВІСЬ
-            xaxis: {
-                title: "Час доби",
-                range: [0, 1440],
-                tickvals: tickVals,
-                ticktext: tickText,
-                side: 'bottom',
-                fixedrange: true
-            },
-            // ВЕРХНЯ ВІСЬ
-            xaxis2: {
-                range: [0, 1440],
-                tickvals: tickVals,
-                ticktext: tickText,
-                overlaying: 'x',
-                side: 'top',
-                matches: 'x',
-                fixedrange: true
-            },
-            yaxis: {
-                title: "Групи",
-                type: "category",
-                categoryorder: "array",
-                categoryarray: groups.reverse()
-            },
-            hovermode: 'closest',
-            shapes: [{
-                type: "line",
-                xref: "x", 
-                x0: getCurrentMinutes(),
-                x1: getCurrentMinutes(),
-                y0: -0.5,
-                y1: groups.length - 0.5,
-                line: { color: "red", width: 2, dash: "dash" }
-            }],
-            margin: { t: 60, b: 60 } 
-        };
-
-        // Фіктивний графік для верхньої осі
-        traces.push({
-            x: [0, 1440],
-            y: [groups[0], groups[0]],
-            mode: 'markers',
-            marker: { opacity: 0 },
-            xaxis: 'x2',
-            showlegend: false,
-            hoverinfo: 'skip'
-        });
-
-        Plotly.newPlot("chart", traces, layout, {responsive: true});
-        startClockUpdate();
+        // Побудова графіку
+        buildChart(traces, finalGroups);
 
     } catch (error) {
         console.error(error);
         document.getElementById("updated").innerHTML = `<span class="error">Помилка: ${error.message}</span>`;
     }
+}
+
+// Допоміжна функція для створення шматка графіку (щоб не копіювати код)
+function createTrace(group, start, end, color, text) {
+    return {
+        x: [start, end],
+        y: [group, group],
+        mode: "lines",
+        line: { width: LINE_WIDTH, color: color },
+        hoverinfo: "text",
+        text: `${group}: ${text}`,
+        showlegend: false,
+        xaxis: 'x'
+    };
+}
+
+function buildChart(traces, groups) {
+    const tickVals = Array.from({ length: 25 }, (_, i) => i * 60);
+    const tickText = Array.from({ length: 25 }, (_, i) => `${i}:00`);
+
+    const layout = {
+        showlegend: false,
+        xaxis: {
+            title: "Час доби",
+            range: [0, 1440],
+            tickvals: tickVals,
+            ticktext: tickText,
+            side: 'bottom',
+            fixedrange: true
+        },
+        xaxis2: {
+            range: [0, 1440],
+            tickvals: tickVals,
+            ticktext: tickText,
+            overlaying: 'x',
+            side: 'top',
+            matches: 'x',
+            fixedrange: true
+        },
+        yaxis: {
+            title: "Групи",
+            type: "category",
+            categoryorder: "array",
+            categoryarray: [...groups].reverse() // Динамічний список груп
+        },
+        hovermode: 'closest',
+        shapes: [{
+            type: "line",
+            xref: "x", 
+            x0: getCurrentMinutes(),
+            x1: getCurrentMinutes(),
+            y0: -0.5,
+            y1: groups.length - 0.5, // Висота лінії тепер залежить від кількості груп
+            line: { color: "red", width: 2, dash: "dash" }
+        }],
+        margin: { t: 60, b: 60 } 
+    };
+
+    // Фіктивна точка для малювання верхньої шкали
+    traces.push({
+        x: [0, 1440],
+        y: [groups[0], groups[0]],
+        mode: 'markers',
+        marker: { opacity: 0 },
+        xaxis: 'x2',
+        showlegend: false,
+        hoverinfo: 'skip'
+    });
+
+    Plotly.newPlot("chart", traces, layout, {responsive: true});
+    startClockUpdate();
 }
 
 function formatTime(minutes) {
