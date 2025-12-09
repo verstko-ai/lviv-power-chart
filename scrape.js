@@ -3,36 +3,44 @@ const fs = require('fs');
 
 (async () => {
   console.log('🚀 Запускаємо браузер...');
-  // Запускаємо прихований браузер
   const browser = await puppeteer.launch({
-  headless: "new",
-  args: ['--no-sandbox', '--disable-setuid-sandbox']
-});
+    headless: "new",
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+  });
+  
   const page = await browser.newPage();
+  
+  // Встановлюємо розмір екрану як у ноутбука
+  await page.setViewport({width: 1280, height: 800});
 
-  // Прикидаємося звичайним комп'ютером (User Agent)
+  // Прикидаємося звичайним користувачем
   await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
   try {
-    console.log('🌍 Відкриваємо сайт Львівобленерго...');
-    // Збільшив час очікування до 90 секунд, бо сайт може тупити
-    await page.goto('https://poweron.loe.lviv.ua/', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    console.log('🌍 Переходимо на сайт (без очікування повної тиші)...');
+    
+    // ЗМІНА: waitUntil: 'domcontentloaded' означає "як тільки з'явився текст", не чекаємо картинок/скриптів
+    await page.goto('https://poweron.loe.lviv.ua/', { 
+      waitUntil: 'domcontentloaded', 
+      timeout: 30000 
+    });
 
-    // Чекаємо 5 секунд, щоб скрипти на сайті точно домалювали графік
-    await new Promise(r => setTimeout(r, 5000));
+    console.log('⏳ Чекаємо 10 секунд для вірності...');
+    await new Promise(r => setTimeout(r, 10000));
 
-    // Забираємо весь текст сторінки
+    // РОБИМО ФОТО (Діагностика)
+    console.log('📸 Робимо скріншот...');
+    await page.screenshot({ path: 'debug_screenshot.png', fullPage: true });
+
+    // Витягуємо текст
     const content = await page.evaluate(() => document.body.innerText);
-    console.log('📄 Текст отримано, довжина:', content.length);
+    console.log('📄 Текст отримано. Довжина:', content.length);
+    console.log('Уривок тексту:', content.substring(0, 200)); // Покажемо початок у логах
 
-    // --- ЛОГІКА ПОШУКУ (як у твоєму скрипті) ---
+    // --- ПАРСИНГ ---
     const dateMatch = content.match(/Графік.*?на\s*([0-3]?\d\.[0-1]?\d\.[0-9]{4})/i);
     const dateFor = dateMatch ? dateMatch[1].trim() : "Не знайдено";
 
-    const updateMatch = content.match(/станом на\s*([0-2]?\d:[0-5]\d)/i);
-    const updatedAt = updateMatch ? updateMatch[1].trim() : new Date().toLocaleTimeString('uk-UA');
-
-    // Шукаємо групи
     const regex = /Група\s*([0-9]+\.[0-9]+)\.?[^\d]*?з\s*([0-2]?\d:[0-5]\d)\s*до\s*([0-2]?\d:[0-5]\d)/gi;
     let m;
     const schedule = {};
@@ -45,23 +53,22 @@ const fs = require('fs');
         schedule[gr].push(time);
         foundCount++;
     }
-    
-    // Результат, який ми збережемо
+
     const result = {
         scan_date: new Date().toISOString(),
         target_date: dateFor,
-        updated_at_site: updatedAt,
         data: schedule
     };
 
     console.log(`✅ Знайдено записів: ${foundCount}`);
     
-    // Зберігаємо у файл power_data.json
     fs.writeFileSync('power_data.json', JSON.stringify(result, null, 2));
 
   } catch (error) {
     console.error('❌ Помилка:', error);
-    process.exit(1); // Завершити з помилкою
+    // Навіть при помилці пробуємо зберегти скріншот, якщо встигли відкрити сторінку
+    try { await page.screenshot({ path: 'error_screenshot.png' }); } catch (e) {}
+    process.exit(1);
   } finally {
     await browser.close();
   }
