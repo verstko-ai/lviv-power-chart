@@ -27,6 +27,12 @@ jobs:
         run: node scrape.js
 
       - name: Save Result
+      - name: Upload Screenshot (Debug)
+        if: always() # Виконувати завжди, навіть якщо скрипт впав
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-screenshots
+          path: "*.png"
         run: |
           git config --global user.name 'GitHub Action'
           git config --global user.email 'action@github.com'
