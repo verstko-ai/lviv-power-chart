@@ -4,7 +4,10 @@ const fs = require('fs');
 (async () => {
   console.log('🚀 Запускаємо браузер...');
   // Запускаємо прихований браузер
-  const browser = await puppeteer.launch({ headless: "new" });
+  const browser = await puppeteer.launch({
+  headless: "new",
+  args: ['--no-sandbox', '--disable-setuid-sandbox']
+});
   const page = await browser.newPage();
 
   // Прикидаємося звичайним комп'ютером (User Agent)
@@ -13,7 +16,7 @@ const fs = require('fs');
   try {
     console.log('🌍 Відкриваємо сайт Львівобленерго...');
     // Збільшив час очікування до 90 секунд, бо сайт може тупити
-    await page.goto('https://poweron.loe.lviv.ua/', { waitUntil: 'networkidle2', timeout: 90000 });
+    await page.goto('https://poweron.loe.lviv.ua/', { waitUntil: 'domcontentloaded', timeout: 60000 });
 
     // Чекаємо 5 секунд, щоб скрипти на сайті точно домалювали графік
     await new Promise(r => setTimeout(r, 5000));
