@@ -1,0 +1,12 @@
+{
+  "name": "lviv-power-scraper",
+  "version": "1.0.0",
+  "description": "Автоматичний парсер світла",
+  "main": "scrape.js",
+  "scripts": {
+    "start": "node scrape.js"
+  },
+  "dependencies": {
+    "puppeteer": "^21.0.0"
+  }
+}
