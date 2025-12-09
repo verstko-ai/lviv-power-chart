@@ -20,21 +20,22 @@
 
 <script>
 // Налаштування кольорів для груп (світло Є)
-// Групи 1.x, 2.x і т.д. будуть мати спільний колір
 const GROUP_COLORS = {
     '1': '#FFA500', // Помаранчевий
-    '2': '#32CD32', // Зелений (LimeGreen)
-    '3': '#1E90FF', // Синій (DodgerBlue)
-    '4': '#9370DB', // Фіолетовий (MediumPurple)
-    '5': '#FF69B4', // Рожевий (HotPink)
-    '6': '#00CED1'  // Бірюзовий (DarkTurquoise)
+    '2': '#32CD32', // Зелений
+    '3': '#1E90FF', // Синій
+    '4': '#9370DB', // Фіолетовий
+    '5': '#FF69B4', // Рожевий
+    '6': '#00CED1'  // Бірюзовий
 };
 
-const COLOR_POWER_OFF = "#000000"; // Колір відключення (чорний)
-const DEFAULT_COLOR   = "#FFD700"; // Запасний жовтий
+const COLOR_POWER_OFF = "#000000"; // Чорний (світла немає)
+const DEFAULT_COLOR   = "#FFD700"; // Жовтий (резерв)
+
+// --- НАЛАШТУВАННЯ ТОВЩИНИ ---
+const LINE_WIDTH = 45; // Було 18. Збільшили, щоб зменшити білі проміжки.
 
 function getGroupColor(groupName) {
-    // Беремо першу цифру групи (наприклад, з "1.2" беремо "1")
     const mainGroup = groupName.charAt(0); 
     return GROUP_COLORS[mainGroup] || DEFAULT_COLOR;
 }
@@ -61,7 +62,7 @@ async function loadPowerData() {
         groups.forEach(group => {
             let last = 0;
             const intervalsStr = schedule[group] || []; 
-            const groupColor = getGroupColor(group); // Визначаємо колір для цієї групи
+            const groupColor = getGroupColor(group);
 
             const outages = intervalsStr.map(interval => {
                 const [start, end] = interval.split("-").map(s => s.trim());
@@ -69,26 +70,26 @@ async function loadPowerData() {
             });
 
             outages.forEach(([start, end]) => {
-                // СВІТЛО Є (Кольорова лінія)
+                // СВІТЛО Є
                 if (start > last) {
                     traces.push({
                         x: [last, start],
                         y: [group, group],
                         mode: "lines",
-                        line: { width: 18, color: groupColor }, // Унікальний колір
+                        line: { width: LINE_WIDTH, color: groupColor }, // Використовуємо нову ширину
                         hoverinfo: "text",
                         text: `${group}: Електроенергія є`,
                         showlegend: false,
-                        xaxis: 'x' // Прив'язка до нижньої осі
+                        xaxis: 'x'
                     });
                 }
 
-                // ВІДКЛЮЧЕННЯ (Чорна лінія)
+                // ВІДКЛЮЧЕННЯ
                 traces.push({
                     x: [start, end],
                     y: [group, group],
                     mode: "lines",
-                    line: { width: 18, color: COLOR_POWER_OFF },
+                    line: { width: LINE_WIDTH, color: COLOR_POWER_OFF }, // Використовуємо нову ширину
                     hoverinfo: "text",
                     text: `${group}: Відключення ${formatTime(start)} – ${formatTime(end)}`,
                     showlegend: false,
@@ -98,13 +99,13 @@ async function loadPowerData() {
                 last = end;
             });
 
-            // Домальовуємо хвіст доби
+            // Хвіст доби
             if (last < 1440) {
                 traces.push({
                     x: [last, 1440],
                     y: [group, group],
                     mode: "lines",
-                    line: { width: 18, color: groupColor },
+                    line: { width: LINE_WIDTH, color: groupColor }, // Використовуємо нову ширину
                     hoverinfo: "text",
                     text: `${group}: Електроенергія є`,
                     showlegend: false,
@@ -113,7 +114,6 @@ async function loadPowerData() {
             }
         });
 
-        // Створюємо масив для поділок часу (0:00, 1:00 ...)
         const tickVals = Array.from({ length: 25 }, (_, i) => i * 60);
         const tickText = Array.from({ length: 25 }, (_, i) => `${i}:00`);
 
@@ -125,17 +125,17 @@ async function loadPowerData() {
                 range: [0, 1440],
                 tickvals: tickVals,
                 ticktext: tickText,
-                side: 'bottom', // Знизу
+                side: 'bottom',
                 fixedrange: true
             },
-            // ВЕРХНЯ ВІСЬ (Дублює нижню)
+            // ВЕРХНЯ ВІСЬ
             xaxis2: {
                 range: [0, 1440],
                 tickvals: tickVals,
                 ticktext: tickText,
-                overlaying: 'x', // Накладається на x
-                side: 'top',     // Розміщується зверху
-                matches: 'x',    // Синхронізується з нижньою
+                overlaying: 'x',
+                side: 'top',
+                matches: 'x',
                 fixedrange: true
             },
             yaxis: {
@@ -154,16 +154,16 @@ async function loadPowerData() {
                 y1: groups.length - 0.5,
                 line: { color: "red", width: 2, dash: "dash" }
             }],
-            margin: { t: 60, b: 60 } // Відступи, щоб влізла верхня шкала
+            margin: { t: 60, b: 60 } 
         };
 
-        // Додаємо невидимий графік для xaxis2, щоб вісь точно відобразилась
+        // Фіктивний графік для верхньої осі
         traces.push({
             x: [0, 1440],
             y: [groups[0], groups[0]],
             mode: 'markers',
             marker: { opacity: 0 },
-            xaxis: 'x2', // Прив'язка до верхньої осі
+            xaxis: 'x2',
             showlegend: false,
             hoverinfo: 'skip'
         });
@@ -196,7 +196,7 @@ function startClockUpdate() {
     }, 60000);
 }
 
-// Запуск + Автооновлення кожні 15 хв
+// Запуск + Автооновлення
 loadPowerData();
 setInterval(() => { console.log("Auto-refresh"); loadPowerData(); }, 900000);
 
