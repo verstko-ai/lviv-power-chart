@@ -9,6 +9,7 @@
     h1 { margin-bottom: 5px; }
     #updated { margin-bottom: 20px; color: #555; }
     #chart { width: 100%; max-width: 1400px; height: 800px; }
+    .error { color: red; font-weight: bold; }
 </style>
 </head>
 <body>
@@ -18,174 +19,150 @@
 <div id="chart"></div>
 
 <script>
-const CSV_INFO = "https://docs.google.com/spreadsheets/d/11sNa680oNGIDLCpeUJqkWd0gpxVIFz9gaZuop-hLE_8/export?format=csv&gid=0";
-const CSV_DATA = "https://docs.google.com/spreadsheets/d/11sNa680oNGIDLCpeUJqkWd0gpxVIFz9gaZuop-hLE_8/export?format=csv&gid=1945313917";
+// Кольори для графіку
+const COLOR_POWER_ON  = "#FFD700";  // світло є (жовтий)
+const COLOR_POWER_OFF = "#000000";  // світла немає (чорний)
 
-const COLOR_POWER_ON  = "#FFD700";  // жовтий
-const COLOR_POWER_OFF = "#000000";  // чорний
-
+// Перетворення часу "ГГ:ХХ" у хвилини від початку доби (0..1440)
 function toMinutes(t) {
     const [h, m] = t.split(":").map(Number);
     return h * 60 + m;
 }
 
-async function fetchCSV(url) {
-    const response = await fetch(url);
-    const buffer = await response.arrayBuffer();
-    return new TextDecoder("utf-8").decode(buffer);
-}
-
-// ✅ НОВИЙ ПРАВИЛЬНИЙ ПАРСЕР CSV З УРАХУВАННЯМ ЛАПОК
-function parseCSV(text) {
-    const lines = text.trim().split("\n");
-    return lines.map(line => {
-        const cells = [];
-        let current = "";
-        let inQuotes = false;
-
-        for (let i = 0; i < line.length; i++) {
-            const c = line[i];
-
-            if (c === '"') {
-                // подвійні лапки "" всередині поля -> одна лапка
-                if (inQuotes && line[i + 1] === '"') {
-                    current += '"';
-                    i++; // пропускаємо другу лапку
-                } else {
-                    inQuotes = !inQuotes;
-                }
-            } else if (c === ',' && !inQuotes) {
-                // кінець клітинки
-                cells.push(current.trim());
-                current = "";
-            } else {
-                current += c;
-            }
+// Головна функція
+async function loadPowerData() {
+    try {
+        // 1. Завантажуємо JSON файл, створений GitHub Action
+        // Додаємо ?v=timestamp, щоб браузер завжди брав свіжу версію, а не з пам'яті
+        const response = await fetch('./power_data.json?v=' + new Date().getTime());
+        
+        if (!response.ok) {
+            throw new Error(`Не вдалося знайти файл даних (Status ${response.status})`);
         }
-        cells.push(current.trim());
 
-        return cells.map(cell => cell.replace(/^"|"$/g, "").trim());
-    });
-}
+        const json = await response.json();
 
-async function loadInfo() {
-    const csv = await fetchCSV(CSV_INFO);
-    const rows = parseCSV(csv);
-    document.getElementById("title").textContent   = `Графік погодинних відключень на ${rows[0][1]}`;
-    document.getElementById("updated").textContent = `Інформація станом на ${rows[1][1]}`;
-}
+        // 2. Оновлюємо заголовки на сторінці
+        document.getElementById("title").textContent = `Графік погодинних відключень на ${json.target_date}`;
+        
+        // Показуємо час оновлення (або з сайту обленерго, або час сканування)
+        const updateTime = json.updated_at_site || new Date(json.scan_date).toLocaleString('uk-UA');
+        document.getElementById("updated").textContent = `Інформація станом на: ${updateTime}`;
 
-async function loadChart() {
-    const csv = await fetchCSV(CSV_DATA);
-    const rows = parseCSV(csv);
+        // 3. Підготовка даних для графіку
+        const schedule = json.data; // Об'єкт типу { "1.1": ["12:00-14:00"], "1.2": ... }
+        
+        // Сортуємо групи, щоб йшли по порядку (1.1, 1.2, 2.1 ...)
+        const groups = Object.keys(schedule).sort(); 
+        const traces = [];
 
-    const groups = [];
-    const outages = {};
+        // Проходимось по кожній групі
+        groups.forEach(group => {
+            let last = 0;
+            // Отримуємо масив інтервалів відключень, наприклад ["12:00-14:00", "18:00-20:00"]
+            const intervalsStr = schedule[group] || []; 
+            
+            // Перетворюємо їх на цифри
+            const outages = intervalsStr.map(interval => {
+                const [start, end] = interval.split("-").map(s => s.trim());
+                return [toMinutes(start), toMinutes(end)];
+            });
 
-    // Беремо назву групи з першого стовпця, інтервали — з другого (як було в тебе спочатку)
-    for (let i = 0; i < rows.length; i++) {
-        const group = rows[i][0];
-        groups.push(group);
+            // Малюємо лінію часу
+            outages.forEach(([start, end]) => {
+                // Якщо є проміжок між останнім відключенням і новим -> малюємо ЖОВТЕ (світло є)
+                if (start > last) {
+                    traces.push({
+                        x: [last, start],
+                        y: [group, group],
+                        mode: "lines",
+                        line: { width: 18, color: COLOR_POWER_ON },
+                        hoverinfo: "text",
+                        text: `${group}: Електроенергія є (${formatTime(last)} - ${formatTime(start)})`,
+                        showlegend: false
+                    });
+                }
 
-        const intervalsStr = rows[i][1] || "";
-
-        // У ЦЬОМУ МІСЦІ тепер rows[i][1] — це вже ЦІЛА клітинка з усіма інтервалами,
-        // навіть якщо в ній були лапки й коми.
-        const intervals = intervalsStr
-            .split(",")
-            .map(s => s.trim())
-            .filter(s => s.length > 0);
-
-        outages[group] = intervals.map(interval => {
-            const [start, end] = interval.split("-").map(s => s.trim());
-            return [start, end];  // ["HH:MM", "HH:MM"]
-        });
-    }
-
-    const traces = [];
-
-    // Логіка побудови сегментів — така ж, як у твоєму оригінальному коді
-    groups.forEach(group => {
-        let last = 0;
-        const intervals = outages[group];
-
-        intervals.forEach(interval => {
-            const start = toMinutes(interval[0]);
-            const end   = toMinutes(interval[1]);
-
-            if (start > last) {
-                // Електроенергія ДО відключення
+                // Малюємо ЧОРНЕ (світла немає)
                 traces.push({
-                    x: [last, start],
+                    x: [start, end],
+                    y: [group, group],
+                    mode: "lines",
+                    line: { width: 18, color: COLOR_POWER_OFF },
+                    hoverinfo: "text",
+                    text: `${group}: Відключення ${formatTime(start)} – ${formatTime(end)}`,
+                    showlegend: false
+                });
+
+                last = end;
+            });
+
+            // Домальовуємо жовте до кінця доби (якщо останнє відключення було раніше 24:00)
+            if (last < 1440) {
+                traces.push({
+                    x: [last, 1440],
                     y: [group, group],
                     mode: "lines",
                     line: { width: 18, color: COLOR_POWER_ON },
                     hoverinfo: "text",
-                    text: `${group}: Електроенергія є`,
+                    text: `${group}: Електроенергія є (${formatTime(last)} - 24:00)`,
                     showlegend: false
                 });
             }
-
-            // ВІДКЛЮЧЕННЯ
-            traces.push({
-                x: [start, end],
-                y: [group, group],
-                mode: "lines",
-                line: { width: 18, color: COLOR_POWER_OFF },
-                hoverinfo: "text",
-                text: `${group}: Відключення ${interval[0]}–${interval[1]}`,
-                showlegend: false
-            });
-
-            last = end;
         });
 
-        // Хвіст зі світлом до кінця доби
-        if (last < 1440) {
-            traces.push({
-                x: [last, 1440],
-                y: [group, group],
-                mode: "lines",
-                line: { width: 18, color: COLOR_POWER_ON },
-                hoverinfo: "text",
-                text: `${group}: Електроенергія є`,
-                showlegend: false
-            });
-        }
-    });
+        // 4. Налаштування відображення (Layout)
+        const layout = {
+            showlegend: false,
+            xaxis: {
+                title: "Час доби",
+                range: [0, 1440],
+                tickvals: Array.from({ length: 25 }, (_, i) => i * 60), // Поділки щогодини
+                ticktext: Array.from({ length: 25 }, (_, i) => `${i}:00`),
+                fixedrange: true // заборонити зум по горизонталі (опціонально)
+            },
+            yaxis: {
+                title: "Групи",
+                type: "category",
+                categoryorder: "array",
+                categoryarray: groups.reverse() // Щоб 1.1 була зверху, а не знизу
+            },
+            hovermode: 'closest',
+            // Червона лінія поточного часу
+            shapes: [{
+                type: "line",
+                x0: getCurrentMinutes(),
+                x1: getCurrentMinutes(),
+                y0: -1,
+                y1: groups.length,
+                line: { color: "red", width: 2, dash: "dash" }
+            }]
+        };
 
-    function getCurrentMinutes() {
-        const now = new Date();
-        return now.getHours() * 60 + now.getMinutes();
+        Plotly.newPlot("chart", traces, layout, {responsive: true});
+
+        // Запускаємо оновлення червоної лінії щохвилини
+        startClockUpdate();
+
+    } catch (error) {
+        console.error(error);
+        document.getElementById("updated").innerHTML = `<span class="error">Помилка завантаження даних: ${error.message}</span>`;
     }
+}
 
-    const layout = {
-        showlegend: false,
-        xaxis: {
-            title: "Час",
-            range: [0, 1440], // поки що лишаємо ПОВНІ 24 години
-            tickvals: Array.from({ length: 25 }, (_, i) => i * 60),
-            ticktext: Array.from({ length: 25 }, (_, i) => `${i}:00`)
-        },
-        yaxis: {
-            title: "Групи",
-            type: "category",
-            categoryorder: "array",
-            categoryarray: groups
-        },
-        shapes: [{
-            type: "line",
-            x0: getCurrentMinutes(),
-            x1: getCurrentMinutes(),
-            y0: -1,
-            y1: groups.length,
-            line: { color: "red", width: 2, dash: "dash" }
-        }]
-    };
+// Допоміжна: хвилини -> текст "14:30"
+function formatTime(minutes) {
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+}
 
-    Plotly.newPlot("chart", traces, layout);
+function getCurrentMinutes() {
+    const now = new Date();
+    return now.getHours() * 60 + now.getMinutes();
+}
 
-    // Оновлення червоної лінії раз на хвилину
+function startClockUpdate() {
     setInterval(() => {
         const current = getCurrentMinutes();
         const clamped = Math.min(current, 1440);
@@ -196,12 +173,9 @@ async function loadChart() {
     }, 60000);
 }
 
-async function init() {
-    await loadInfo();
-    await loadChart();
-}
+// Запуск
+loadPowerData();
 
-init();
 </script>
 </body>
 </html>
