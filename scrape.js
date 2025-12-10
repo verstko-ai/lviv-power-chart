@@ -16,64 +16,79 @@ const fs = require('fs');
     console.log('🌍 Переходимо на сайт...');
     await page.goto('https://poweron.loe.lviv.ua/', { waitUntil: 'domcontentloaded', timeout: 30000 });
     
-    console.log('⏳ Чекаємо 5 секунд для підвантаження...');
+    console.log('⏳ Чекаємо 5 секунд...');
     await new Promise(r => setTimeout(r, 5000));
 
-    // Отримуємо весь текст
     const content = await page.evaluate(() => document.body.innerText);
     console.log('📄 Текст отримано. Довжина:', content.length);
 
-    // --- НОВА ЛОГІКА ПАРСИНГУ ---
+    // --- НОВА ЛОГІКА (SMART PARSING) ---
+
+    // 1. Знаходимо всі позиції дат у тексті.
+    // Regex ловить "10.12.2025" АБО "10.12" (без року)
+    const dateRegex = /([0-3]\d\.[0-1]\d)(\.[0-9]{4})?/g;
     
-    // 1. Шукаємо всі дати формату DD.MM.YYYY
-    // Використовуємо regex з index, щоб знати, де починається блок дати
-    const dateRegex = /([0-3]\d\.[0-1]\d\.[0-9]{4})/g;
+    const datePositions = [];
     let match;
-    const foundDates = [];
-    
+    const currentYear = new Date().getFullYear();
+
     while ((match = dateRegex.exec(content)) !== null) {
-        foundDates.push({
-            date: match[1],
+        let dateStr = match[1]; // Це буде "10.12"
+        // Якщо року немає в тексті, додаємо поточний
+        if (!match[2]) {
+            dateStr += `.${currentYear}`;
+        } else {
+            dateStr += match[2]; // Додаємо знайдений рік (.2025)
+        }
+
+        datePositions.push({
+            date: dateStr,
             index: match.index
         });
     }
+    
+    console.log(`📅 Знайдено міток дати: ${datePositions.length}`);
 
-    console.log('📅 Знайдені дати:', foundDates.map(d => d.date));
+    // 2. Знаходимо всі групи відключень і прив'язуємо до найближчої дати зверху
+    const groupRegex = /Група\s*([0-9]+\.[0-9]+)\.?[^\d]*?з\s*([0-2]?\d:[0-5]\d)\s*до\s*([0-2]?\d:[0-5]\d)/gi;
+    const finalSchedule = {};
+    let count = 0;
 
-    // Структура для збереження: { "09.12.2024": { "1.1": ["10-14"] }, "10.12.2024": ... }
-    const finalSchedule = {}; 
+    while ((m = groupRegex.exec(content)) !== null) {
+        const groupName = m[1];
+        const timeRange = m[2] + "-" + m[3];
+        const groupIndex = m.index;
 
-    // Якщо дат не знайдено, спробуємо старий метод (на всяк випадок)
-    if (foundDates.length === 0) {
-        console.log('⚠️ Дат не знайдено, парсимо як один блок.');
-        finalSchedule["Unknown"] = parseOutages(content);
-    } else {
-        // Проходимо по знайдених датах і ріжемо текст на шматки
-        for (let i = 0; i < foundDates.length; i++) {
-            const currentDateObj = foundDates[i];
-            const dateStr = currentDateObj.date;
+        // Шукаємо дату, яка стоїть ПЕРЕД цією групою і є найближчою
+        // Фільтруємо ті, що менші за groupIndex, і беремо останню з них
+        const validDates = datePositions.filter(d => d.index < groupIndex);
+        
+        if (validDates.length > 0) {
+            const bestDate = validDates[validDates.length - 1].date;
             
-            // Початок шматка тексту - там де знайшли дату
-            const startIdx = currentDateObj.index;
+            if (!finalSchedule[bestDate]) finalSchedule[bestDate] = {};
+            if (!finalSchedule[bestDate][groupName]) finalSchedule[bestDate][groupName] = [];
             
-            // Кінець шматка - там де починається наступна дата (або кінець тексту)
-            const endIdx = (i + 1 < foundDates.length) ? foundDates[i+1].index : content.length;
-            
-            const textBlock = content.substring(startIdx, endIdx);
-            console.log(`✂️ Обробка блоку для ${dateStr} (символи ${startIdx}-${endIdx})`);
-            
-            finalSchedule[dateStr] = parseOutages(textBlock);
+            finalSchedule[bestDate][groupName].push(timeRange);
+            count++;
         }
     }
 
-    // Формуємо фінальний JSON
+    console.log(`✅ Оброблено записів відключень: ${count}`);
+
+    // Сортуємо ключі дат (щоб у JSON було красиво)
+    const sortedSchedule = {};
+    Object.keys(finalSchedule).sort().forEach(key => {
+        sortedSchedule[key] = finalSchedule[key];
+    });
+
     const result = {
         scan_date: new Date().toISOString(),
-        schedules: finalSchedule // Тепер це об'єкт з датами
+        schedules: sortedSchedule
     };
     
     fs.writeFileSync('power_data.json', JSON.stringify(result, null, 2));
-    console.log('✅ Дані збережено в power_data.json');
+    console.log('💾 Дані збережено.');
 
   } catch (error) {
     console.error('❌ Помилка:', error);
@@ -82,19 +97,3 @@ const fs = require('fs');
     await browser.close();
   }
 })();
-
-// Функція, яка витягує групи і час з шматка тексту
-function parseOutages(text) {
-    const regex = /Група\s*([0-9]+\.[0-9]+)\.?[^\d]*?з\s*([0-2]?\d:[0-5]\d)\s*до\s*([0-2]?\d:[0-5]\d)/gi;
-    let m;
-    const schedule = {};
-    
-    while ((m = regex.exec(text)) !== null) {
-        const gr = m[1]; // Наприклад "1.1"
-        const time = m[2] + "-" + m[3]; // Наприклад "14:00-16:00"
-        
-        if (!schedule[gr]) schedule[gr] = [];
-        schedule[gr].push(time);
-    }
-    return schedule;
-}
