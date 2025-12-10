@@ -1,6 +1,12 @@
 const puppeteer = require('puppeteer');
 const fs = require('fs');
 
+const MONTHS_MAP = {
+    'січня': '01', 'лютого': '02', 'березня': '03', 'квітня': '04',
+    'травня': '05', 'червня': '06', 'липня': '07', 'серпня': '08',
+    'вересня': '09', 'жовтня': '10', 'листопада': '11', 'грудня': '12'
+};
+
 (async () => {
   console.log('🚀 Запускаємо браузер...');
   const browser = await puppeteer.launch({
@@ -22,34 +28,42 @@ const fs = require('fs');
     const content = await page.evaluate(() => document.body.innerText);
     console.log('📄 Текст отримано. Довжина:', content.length);
 
-    // --- НОВА ЛОГІКА (SMART PARSING) ---
+    // --- НОВА ЛОГІКА: Підтримка назв місяців ---
 
-    // 1. Знаходимо всі позиції дат у тексті.
-    // Regex ловить "10.12.2025" АБО "10.12" (без року)
-    const dateRegex = /([0-3]\d\.[0-1]\d)(\.[0-9]{4})?/g;
+    // Regex шукає:
+    // 1. Число (1-31)
+    // 2. Роздільник (крапка АБО пробіл)
+    // 3. Місяць (цифри АБО слово "грудня")
+    // 4. (Опційно) Рік
+    const dateRegex = /([0-3]?\d)[\.\s]+(0[1-9]|1[0-2]|січня|лютого|березня|квітня|травня|червня|липня|серпня|вересня|жовтня|листопада|грудня)(?:[\.\s]+([0-9]{4}))?/gi;
     
     const datePositions = [];
     let match;
     const currentYear = new Date().getFullYear();
 
     while ((match = dateRegex.exec(content)) !== null) {
-        let dateStr = match[1]; // Це буде "10.12"
-        // Якщо року немає в тексті, додаємо поточний
-        if (!match[2]) {
-            dateStr += `.${currentYear}`;
-        } else {
-            dateStr += match[2]; // Додаємо знайдений рік (.2025)
+        let day = match[1].padStart(2, '0');
+        let monthRaw = match[2].toLowerCase();
+        let year = match[3] || currentYear;
+
+        // Конвертуємо назву місяця в номер (грудня -> 12)
+        if (MONTHS_MAP[monthRaw]) {
+            monthRaw = MONTHS_MAP[monthRaw];
         }
 
+        const formattedDate = `${day}.${monthRaw}.${year}`;
+
+        console.log(`🔎 Знайдено дату: ${formattedDate} (в позиції ${match.index}) - Текст: "${match[0]}"`);
+
         datePositions.push({
-            date: dateStr,
+            date: formattedDate,
             index: match.index
         });
     }
     
-    console.log(`📅 Знайдено міток дати: ${datePositions.length}`);
+    console.log(`📅 Всього знайдено міток дати: ${datePositions.length}`);
 
-    // 2. Знаходимо всі групи відключень і прив'язуємо до найближчої дати зверху
+    // --- ПАРСИНГ ГРУП ---
     const groupRegex = /Група\s*([0-9]+\.[0-9]+)\.?[^\d]*?з\s*([0-2]?\d:[0-5]\d)\s*до\s*([0-2]?\d:[0-5]\d)/gi;
     const finalSchedule = {};
     let count = 0;
@@ -59,8 +73,7 @@ const fs = require('fs');
         const timeRange = m[2] + "-" + m[3];
         const groupIndex = m.index;
 
-        // Шукаємо дату, яка стоїть ПЕРЕД цією групою і є найближчою
-        // Фільтруємо ті, що менші за groupIndex, і беремо останню з них
+        // Знаходимо дату, яка була ОСТАННЬОЮ перед цією групою
         const validDates = datePositions.filter(d => d.index < groupIndex);
         
         if (validDates.length > 0) {
@@ -74,11 +87,14 @@ const fs = require('fs');
         }
     }
 
-    console.log(`✅ Оброблено записів відключень: ${count}`);
+    console.log(`✅ Розподілено записів: ${count}`);
 
-    // Сортуємо ключі дат (щоб у JSON було красиво)
+    // Сортуємо (10.12, потім 11.12)
     const sortedSchedule = {};
-    Object.keys(finalSchedule).sort().forEach(key => {
+    Object.keys(finalSchedule).sort((a, b) => {
+         const toDate = s => { const p = s.split('.'); return new Date(p[2], p[1]-1, p[0]); };
+         return toDate(a) - toDate(b);
+    }).forEach(key => {
         sortedSchedule[key] = finalSchedule[key];
     });
 
