@@ -8,7 +8,7 @@ const MONTHS_MAP = {
 };
 
 (async () => {
-  console.log('🚀 Запускаємо браузер...');
+  console.log('🚀 Запускаємо браузер (Strict Mode)...');
   const browser = await puppeteer.launch({
     headless: "new",
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
@@ -28,40 +28,55 @@ const MONTHS_MAP = {
     const content = await page.evaluate(() => document.body.innerText);
     console.log('📄 Текст отримано. Довжина:', content.length);
 
-    // --- НОВА ЛОГІКА: Підтримка назв місяців ---
+    // --- СУВОРИЙ ПАРСИНГ ДАТ ---
 
-    // Regex шукає:
-    // 1. Число (1-31)
-    // 2. Роздільник (крапка АБО пробіл)
-    // 3. Місяць (цифри АБО слово "грудня")
-    // 4. (Опційно) Рік
-    const dateRegex = /([0-3]?\d)[\.\s]+(0[1-9]|1[0-2]|січня|лютого|березня|квітня|травня|червня|липня|серпня|вересня|жовтня|листопада|грудня)(?:[\.\s]+([0-9]{4}))?/gi;
+    // Regex пояснення:
+    // (?:^|\s) -> Початок рядка АБО пробіл (щоб не ловити всередині номерів телефонів)
+    // (0?[1-9]|[12]\d|3[01]) -> День суворо 1-31. Жодних 38!
+    // [\.\s]+ -> Роздільник (крапка або пробіл)
+    // (...) -> Місяць (цифри 01-12 або слова)
+    // (?:[\.\s]+(202[4-9]))? -> Рік 2024-2029 (опційно)
+    const dateRegex = /(?:^|\s)(0?[1-9]|[12]\d|3[01])[\.\s]+(0[1-9]|1[0-2]|січня|лютого|березня|квітня|травня|червня|липня|серпня|вересня|жовтня|листопада|грудня)(?:[\.\s,]+(202[4-9]))?/gi;
     
     const datePositions = [];
     let match;
-    const currentYear = new Date().getFullYear();
+    const today = new Date();
+    const currentYear = today.getFullYear();
 
     while ((match = dateRegex.exec(content)) !== null) {
         let day = match[1].padStart(2, '0');
         let monthRaw = match[2].toLowerCase();
         let year = match[3] || currentYear;
 
-        // Конвертуємо назву місяця в номер (грудня -> 12)
         if (MONTHS_MAP[monthRaw]) {
             monthRaw = MONTHS_MAP[monthRaw];
         }
 
-        const formattedDate = `${day}.${monthRaw}.${year}`;
+        const dateString = `${year}-${monthRaw}-${day}`; // Format YYYY-MM-DD for checking
+        const parsedDate = new Date(dateString);
+        
+        // --- ФІЛЬТР "АДЕКВАТНОСТІ" ---
+        // Перевіряємо, наскільки дата далека від сьогодні
+        const diffTime = parsedDate - today;
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
 
-        console.log(`🔎 Знайдено дату: ${formattedDate} (в позиції ${match.index}) - Текст: "${match[0]}"`);
-
-        datePositions.push({
-            date: formattedDate,
-            index: match.index
-        });
+        // Дозволяємо дати: від "вчора" (-1) до "післязавтра" (+3)
+        // Це відсіє старі новини за жовтень або дати з майбутнього року
+        if (diffDays >= -2 && diffDays <= 4) {
+             const formattedDisplay = `${day}.${monthRaw}.${year}`;
+             console.log(`✅ Знайдено ВАЛІДНУ дату: ${formattedDisplay} (Index: ${match.index})`);
+             
+             datePositions.push({
+                date: formattedDisplay,
+                index: match.index,
+                obj: parsedDate
+            });
+        } else {
+            console.log(`🗑️ Ігноруємо дату (занадто стара/далека): ${day}.${monthRaw}.${year}`);
+        }
     }
     
-    console.log(`📅 Всього знайдено міток дати: ${datePositions.length}`);
+    console.log(`📅 Всього валідних дат: ${datePositions.length}`);
 
     // --- ПАРСИНГ ГРУП ---
     const groupRegex = /Група\s*([0-9]+\.[0-9]+)\.?[^\d]*?з\s*([0-2]?\d:[0-5]\d)\s*до\s*([0-2]?\d:[0-5]\d)/gi;
@@ -73,29 +88,32 @@ const MONTHS_MAP = {
         const timeRange = m[2] + "-" + m[3];
         const groupIndex = m.index;
 
-        // Знаходимо дату, яка була ОСТАННЬОЮ перед цією групою
+        // Шукаємо найближчу дату зліва (Index < GroupIndex)
         const validDates = datePositions.filter(d => d.index < groupIndex);
         
         if (validDates.length > 0) {
+            // Беремо останню знайдену (найближчу до групи)
             const bestDate = validDates[validDates.length - 1].date;
             
             if (!finalSchedule[bestDate]) finalSchedule[bestDate] = {};
             if (!finalSchedule[bestDate][groupName]) finalSchedule[bestDate][groupName] = [];
             
-            finalSchedule[bestDate][groupName].push(timeRange);
+            // Захист від дублікатів (іноді на сайті пишуть час двічі)
+            if (!finalSchedule[bestDate][groupName].includes(timeRange)) {
+                finalSchedule[bestDate][groupName].push(timeRange);
+            }
             count++;
         }
     }
 
     console.log(`✅ Розподілено записів: ${count}`);
 
-    // Сортуємо (10.12, потім 11.12)
+    // Сортування ключів за часом
     const sortedSchedule = {};
-    Object.keys(finalSchedule).sort((a, b) => {
-         const toDate = s => { const p = s.split('.'); return new Date(p[2], p[1]-1, p[0]); };
-         return toDate(a) - toDate(b);
-    }).forEach(key => {
-        sortedSchedule[key] = finalSchedule[key];
+    datePositions.sort((a, b) => a.obj - b.obj).forEach(dp => {
+        if (finalSchedule[dp.date]) {
+            sortedSchedule[dp.date] = finalSchedule[dp.date];
+        }
     });
 
     const result = {
