@@ -27,6 +27,10 @@ const PALETTE = ['#FFA500', '#32CD32', '#1E90FF', '#9370DB', '#FF69B4', '#00CED1
 const COLOR_POWER_OFF = "#333333"; 
 const COLOR_MIDNIGHT = "#00008B"; // Колір розділювача днів
 
+// *** НОВІ КОНСТАНТИ ДЛЯ ВЕРХНЬОЇ ШКАЛИ ***
+const TOP_TIMELINE_GROUP_1 = "Top Timeline 1";
+const TOP_TIMELINE_GROUP_2 = "Top Timeline 2";
+
 // Шаблон груп
 const DEFAULT_TEMPLATE = ["1.1", "1.2", "2.1", "2.2", "3.1", "3.2", "4.1", "4.2", "5.1", "5.2", "6.1", "6.2"];
 
@@ -71,15 +75,11 @@ async function loadPowerData() {
         today.setHours(0,0,0,0);
         
         // --- ЛОГІКА ВИБОРУ РЕЖИМУ ---
-        // Якщо є сьогодні і завтра -> COMBINED MODE
-        // Інакше -> STANDARD MODE (показуємо першу знайдену дату)
-
         let traces = [];
         let layoutShapes = [];
         let finalGroups = new Set(DEFAULT_TEMPLATE);
         
         // Знаходимо сьогоднішню дату в ключах JSON
-        // (форматуємо today назад в рядок для порівняння або порівнюємо об'єкти)
         const todayStr = dateKeys.find(k => parseDateKey(k).getTime() === today.getTime());
         
         // Перевіряємо, чи є завтра
@@ -117,13 +117,12 @@ async function loadPowerData() {
             layoutShapes.push({
                 type: 'line',
                 x0: 1440, x1: 1440,
-                y0: -0.5, y1: finalGroups.size + 0.5, // Динамічна висота пізніше виправиться
+                y0: -0.5, y1: finalGroups.size + 1.5, // Збільшуємо висоту для 2-х нових груп
                 line: { color: COLOR_MIDNIGHT, width: 3, dash: 'dot' }
             });
 
         } else {
             // === СТАНДАРТНИЙ РЕЖИМ ===
-            // Беремо або сьогодні, або першу доступну дату (якщо сьогодні немає)
             const targetDate = todayStr || dateKeys[0];
             chartTitle = `Графік на ${targetDate}`;
             
@@ -133,8 +132,23 @@ async function loadPowerData() {
 
         document.getElementById("title").innerText = chartTitle;
 
-        // Сортуємо групи
-        const sortedGroups = [...finalGroups].sort();
+        // *** ДОДАЄМО ГРУПИ ДЛЯ ВЕРХНЬОЇ ШКАЛИ ***
+        finalGroups.add(TOP_TIMELINE_GROUP_2);
+        finalGroups.add(TOP_TIMELINE_GROUP_1);
+        
+        // Сортуємо групи (щоб нові були зверху)
+        let sortedGroups = [...finalGroups];
+        // Виносимо групи шкали на початок масиву, зберігаючи порядок 2 -> 1
+        sortedGroups = sortedGroups.filter(g => g !== TOP_TIMELINE_GROUP_1 && g !== TOP_TIMELINE_GROUP_2)
+                                   .sort();
+        sortedGroups.unshift(TOP_TIMELINE_GROUP_1);
+        sortedGroups.unshift(TOP_TIMELINE_GROUP_2);
+        
+        // *** ДОДАЄМО ПОРОЖНІ ТРАСУВАННЯ ДЛЯ ВЕРХНЬОЇ ШКАЛИ ***
+        // Ці трасування будуть використовуватися як верхня вісь X
+        traces.push(createTrace(TOP_TIMELINE_GROUP_1, globalXMin, globalXMax, 'rgba(0,0,0,0)', ""));
+        traces.push(createTrace(TOP_TIMELINE_GROUP_2, globalXMin, globalXMax, 'rgba(0,0,0,0)', ""));
+
 
         // Будуємо графік
         buildChart(traces, sortedGroups, globalXMin, globalXMax, layoutShapes, isCombinedMode);
@@ -146,9 +160,11 @@ async function loadPowerData() {
 }
 
 // Функція перетворення даних дня в смужки
-// offset = 0 для сьогодні, 1440 для завтра
 function processDayData(schedule, offset, traces, allGroups) {
     allGroups.forEach(group => {
+        // Пропускаємо групи верхньої шкали, оскільки вони вже додані в loadPowerData
+        if (group === TOP_TIMELINE_GROUP_1 || group === TOP_TIMELINE_GROUP_2) return; 
+
         const intervalsStr = schedule[group] || [];
         const groupColor = getGroupColor(group);
         
@@ -189,7 +205,8 @@ function createTrace(group, start, end, color, text) {
         x: [start, end],
         y: [group, group],
         mode: "lines",
-        line: { width: LINE_WIDTH, color: color },
+        // Встановлюємо LINE_WIDTH тільки для груп даних, для шкали — 0
+        line: { width: (group === TOP_TIMELINE_GROUP_1 || group === TOP_TIMELINE_GROUP_2) ? 0.1 : LINE_WIDTH, color: color },
         hoverinfo: "text",
         text: `${group}: ${text}`,
         showlegend: false
@@ -203,7 +220,7 @@ function buildChart(traces, groups, xMin, xMax, shapes, isCombined) {
     
     // Робимо кроки по годині
     for (let i = 0; i <= xMax; i += 60) {
-        if (i < xMin) continue; // Не показувати мітки з минулого, яке ми обрізали
+        if (i < xMin) continue;
         
         tickVals.push(i);
         
@@ -219,44 +236,83 @@ function buildChart(traces, groups, xMin, xMax, shapes, isCombined) {
         tickText.push(`${displayHour.toString().padStart(2, '0')}:00${suffix}`);
     }
 
-    // Оновлюємо висоту ліній (сітки та півночі) під к-сть груп
+    // Оновлюємо висоту ліній (сітки та півночі) під к-сть груп (+2 для верхньої шкали)
+    const totalGroups = groups.length;
     shapes.forEach(s => {
-        s.y1 = groups.length - 0.5;
+        s.y1 = totalGroups - 0.5;
     });
-
+    
+    // Положення червоної лінії
+    const lineYMax = totalGroups - 0.5;
+    
     // Додаємо лінію "Зараз"
     shapes.push({
         type: "line",
         xref: "x",
-        // getCurrentTotalMinutes повертає час від початку сьогоднішнього дня (0..1440)
-        // Якщо ми дивимось на завтра, лінія "Зараз" залишиться в зоні сьогодні
         x0: getCurrentTotalMinutes(),
         x1: getCurrentTotalMinutes(),
         y0: -0.5,
-        y1: groups.length - 0.5,
+        y1: lineYMax,
         line: { color: "red", width: 2, dash: "dash" }
+    });
+    
+    // Фільтруємо мітки осі Y: приховуємо мітки для верхніх груп, але використовуємо їх для шкали
+    const yTickText = [...groups].reverse().map(group => {
+        if (group === TOP_TIMELINE_GROUP_1 || group === TOP_TIMELINE_GROUP_2) {
+            return ''; // Приховуємо назву групи, але залишаємо місце
+        }
+        return group;
     });
 
     const layout = {
         xaxis: {
-            range: [xMin, xMax], // Динамічний діапазон (обрізаний початок)
+            range: [xMin, xMax], 
             tickvals: tickVals,
-            ticktext: tickText,
+            // ВИКОРИСТАННЯ МІТОК ДЛЯ ВЕРХНЬОЇ ШКАЛИ (встановлюємо ticktext_overlay: 'true' на основі шаблону)
+            ticktext: tickText.map((text, index) => {
+                // Мітки потрібні тільки на основній осі X (знизу)
+                return text;
+            }),
             fixedrange: true,
             gridcolor: '#eee'
         },
         yaxis: {
-            title: "",
+            title: "Групи",
             type: "category",
             categoryorder: "array",
             categoryarray: [...groups].reverse(),
-            fixedrange: true
+            // Використовуємо наш масив з порожніми рядками для приховування міток
+            ticktext: yTickText, 
+            fixedrange: true,
+            showgrid: true,
+            zeroline: false
+        },
+        // *** ДОДАЄМО ДРУГУ ВІСЬ X ЗВЕРХУ ***
+        xaxis2: {
+            overlaying: 'x', // Накладаємо на основну вісь X
+            side: 'top',     // Розміщуємо зверху
+            range: [xMin, xMax],
+            tickvals: tickVals,
+            ticktext: tickText,
+            fixedrange: true,
+            showline: true,
+            linecolor: '#444',
+            linewidth: 1,
+            showgrid: false,
+            zeroline: false
         },
         margin: { t: 40, b: 40, l: 60, r: 20 },
         hovermode: 'closest',
         shapes: shapes,
-        height: groups.length * 60 + 100 // Адаптивна висота графіку
+        height: totalGroups * 50 + 100 // Адаптивна висота графіку
     };
+    
+    // *** ПРИКРІПЛЮЄМО ТРАСУВАННЯ ВЕРХНЬОЇ ШКАЛИ ДО X2 (ВЕРХНЬОЇ ОСІ) ***
+    traces.forEach(trace => {
+        if (trace.y[0] === TOP_TIMELINE_GROUP_1 || trace.y[0] === TOP_TIMELINE_GROUP_2) {
+            trace.xaxis = 'x2'; 
+        }
+    });
 
     Plotly.newPlot("chart", traces, layout, {responsive: true});
     
@@ -276,21 +332,21 @@ function getCurrentTotalMinutes() {
 }
 
 function startClockUpdate() {
-    // Оновлюємо червону лінію раз на хвилину
     if (window.clockInterval) clearInterval(window.clockInterval);
     
     window.clockInterval = setInterval(() => {
         const current = getCurrentTotalMinutes();
-        // Оновлюємо останню фігуру в масиві shapes (це наша червона лінія)
-        // Примітка: Plotly.relayout складніший з масивами shapes, 
-        // тому найпростіше - просто перемалювати лінію, якщо є можливість,
-        // але для продуктивності спробуємо оновити конкретний атрибут.
         
-        // Тут спрощений update - просто перезавантажимо дані, 
-        // або можна залишити статичну, якщо користувач не сидить годинами на сторінці.
-        // Для простоти - просто log, бо Plotly relayout складний для динамічних shapes index.
-        console.log("Time update:", current);
-    }, 60000);
+        // Оновлення червоної лінії (останній shape в масиві)
+        Plotly.relayout("chart", {
+            'shapes[0].x0': current,
+            'shapes[0].x1': current,
+            // Оновлюємо також фігуру-розділювач Півночі, якщо вона є
+            'shapes[1].x0': current,
+            'shapes[1].x1': current,
+        });
+
+    }, 60000); // Оновлюємо раз на хвилину
 }
 
 // Старт
