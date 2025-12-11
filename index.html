@@ -27,9 +27,8 @@ const PALETTE = ['#FFA500', '#32CD32', '#1E90FF', '#9370DB', '#FF69B4', '#00CED1
 const COLOR_POWER_OFF = "#333333"; 
 const COLOR_MIDNIGHT = "#00008B"; // Колір розділювача днів
 
-// *** НОВІ КОНСТАНТИ ДЛЯ ВЕРХНЬОЇ ШКАЛИ ***
-const TOP_TIMELINE_GROUP_1 = "Top Timeline 1";
-const TOP_TIMELINE_GROUP_2 = "Top Timeline 2";
+// *** НОВА КОНСТАНТА ДЛЯ НЕВИДИМОЇ ТРАСУВАННЯ ШКАЛИ ***
+const TOP_TIMELINE_DUMMY = "Timeline_Axis_Anchor";
 
 // Шаблон груп
 const DEFAULT_TEMPLATE = ["1.1", "1.2", "2.1", "2.2", "3.1", "3.2", "4.1", "4.2", "5.1", "5.2", "6.1", "6.2"];
@@ -117,7 +116,7 @@ async function loadPowerData() {
             layoutShapes.push({
                 type: 'line',
                 x0: 1440, x1: 1440,
-                y0: -0.5, y1: finalGroups.size + 1.5, // Збільшуємо висоту для 2-х нових груп
+                y0: -0.5, y1: finalGroups.size - 0.5, 
                 line: { color: COLOR_MIDNIGHT, width: 3, dash: 'dot' }
             });
 
@@ -132,23 +131,11 @@ async function loadPowerData() {
 
         document.getElementById("title").innerText = chartTitle;
 
-        // *** ДОДАЄМО ГРУПИ ДЛЯ ВЕРХНЬОЇ ШКАЛИ ***
-        finalGroups.add(TOP_TIMELINE_GROUP_2);
-        finalGroups.add(TOP_TIMELINE_GROUP_1);
-        
-        // Сортуємо групи (щоб нові були зверху)
-        let sortedGroups = [...finalGroups];
-        // Виносимо групи шкали на початок масиву, зберігаючи порядок 2 -> 1
-        sortedGroups = sortedGroups.filter(g => g !== TOP_TIMELINE_GROUP_1 && g !== TOP_TIMELINE_GROUP_2)
-                                   .sort();
-        sortedGroups.unshift(TOP_TIMELINE_GROUP_1);
-        sortedGroups.unshift(TOP_TIMELINE_GROUP_2);
-        
-        // *** ДОДАЄМО ПОРОЖНІ ТРАСУВАННЯ ДЛЯ ВЕРХНЬОЇ ШКАЛИ ***
-        // Ці трасування будуть використовуватися як верхня вісь X
-        traces.push(createTrace(TOP_TIMELINE_GROUP_1, globalXMin, globalXMax, 'rgba(0,0,0,0)', ""));
-        traces.push(createTrace(TOP_TIMELINE_GROUP_2, globalXMin, globalXMax, 'rgba(0,0,0,0)', ""));
+        // Сортуємо групи
+        const sortedGroups = [...finalGroups].sort();
 
+        // *** ВИПРАВЛЕННЯ: СТВОРЕННЯ НЕВИДИМОЇ ТРАСУВАННЯ ДЛЯ АКТИВАЦІЇ XAXIS2 ***
+        traces.push(createDummyTrace(sortedGroups.length, globalXMin, globalXMax));
 
         // Будуємо графік
         buildChart(traces, sortedGroups, globalXMin, globalXMax, layoutShapes, isCombinedMode);
@@ -159,12 +146,26 @@ async function loadPowerData() {
     }
 }
 
+// *** НОВА ДОПОМІЖНА ФУНКЦІЯ: СТВОРЕННЯ НЕВИДИМОЇ ТРАСУВАННЯ ***
+function createDummyTrace(numGroups, xMin, xMax) {
+    // Ми використовуємо координату Y, яка не існує в масиві group (наприклад, -1)
+    // щоб гарантовано не перекривати реальні групи.
+    return {
+        x: [xMin, xMax],
+        y: [numGroups + 0.5, numGroups + 0.5], 
+        mode: "lines",
+        line: { width: 0.1, color: 'rgba(0,0,0,0)' }, // Майже невидима
+        hoverinfo: "none",
+        showlegend: false,
+        xaxis: 'x2', // Прив'язуємо до верхньої осі
+        name: TOP_TIMELINE_DUMMY
+    };
+}
+
+
 // Функція перетворення даних дня в смужки
 function processDayData(schedule, offset, traces, allGroups) {
     allGroups.forEach(group => {
-        // Пропускаємо групи верхньої шкали, оскільки вони вже додані в loadPowerData
-        if (group === TOP_TIMELINE_GROUP_1 || group === TOP_TIMELINE_GROUP_2) return; 
-
         const intervalsStr = schedule[group] || [];
         const groupColor = getGroupColor(group);
         
@@ -205,8 +206,7 @@ function createTrace(group, start, end, color, text) {
         x: [start, end],
         y: [group, group],
         mode: "lines",
-        // Встановлюємо LINE_WIDTH тільки для груп даних, для шкали — 0
-        line: { width: (group === TOP_TIMELINE_GROUP_1 || group === TOP_TIMELINE_GROUP_2) ? 0.1 : LINE_WIDTH, color: color },
+        line: { width: LINE_WIDTH, color: color }, 
         hoverinfo: "text",
         text: `${group}: ${text}`,
         showlegend: false
@@ -236,8 +236,9 @@ function buildChart(traces, groups, xMin, xMax, shapes, isCombined) {
         tickText.push(`${displayHour.toString().padStart(2, '0')}:00${suffix}`);
     }
 
-    // Оновлюємо висоту ліній (сітки та півночі) під к-сть груп (+2 для верхньої шкали)
     const totalGroups = groups.length;
+    
+    // Оновлюємо висоту ліній (сітки та півночі)
     shapes.forEach(s => {
         s.y1 = totalGroups - 0.5;
     });
@@ -255,24 +256,13 @@ function buildChart(traces, groups, xMin, xMax, shapes, isCombined) {
         y1: lineYMax,
         line: { color: "red", width: 2, dash: "dash" }
     });
-    
-    // Фільтруємо мітки осі Y: приховуємо мітки для верхніх груп, але використовуємо їх для шкали
-    const yTickText = [...groups].reverse().map(group => {
-        if (group === TOP_TIMELINE_GROUP_1 || group === TOP_TIMELINE_GROUP_2) {
-            return ''; // Приховуємо назву групи, але залишаємо місце
-        }
-        return group;
-    });
 
     const layout = {
         xaxis: {
+            title: "Час",
             range: [xMin, xMax], 
             tickvals: tickVals,
-            // ВИКОРИСТАННЯ МІТОК ДЛЯ ВЕРХНЬОЇ ШКАЛИ (встановлюємо ticktext_overlay: 'true' на основі шаблону)
-            ticktext: tickText.map((text, index) => {
-                // Мітки потрібні тільки на основній осі X (знизу)
-                return text;
-            }),
+            ticktext: tickText,
             fixedrange: true,
             gridcolor: '#eee'
         },
@@ -281,8 +271,6 @@ function buildChart(traces, groups, xMin, xMax, shapes, isCombined) {
             type: "category",
             categoryorder: "array",
             categoryarray: [...groups].reverse(),
-            // Використовуємо наш масив з порожніми рядками для приховування міток
-            ticktext: yTickText, 
             fixedrange: true,
             showgrid: true,
             zeroline: false
@@ -299,7 +287,9 @@ function buildChart(traces, groups, xMin, xMax, shapes, isCombined) {
             linecolor: '#444',
             linewidth: 1,
             showgrid: false,
-            zeroline: false
+            zeroline: false,
+            // Додамо невеликий відступ, щоб вісь X2 не "зливалася" з графіком
+            automargin: true 
         },
         margin: { t: 40, b: 40, l: 60, r: 20 },
         hovermode: 'closest',
@@ -307,13 +297,6 @@ function buildChart(traces, groups, xMin, xMax, shapes, isCombined) {
         height: totalGroups * 50 + 100 // Адаптивна висота графіку
     };
     
-    // *** ПРИКРІПЛЮЄМО ТРАСУВАННЯ ВЕРХНЬОЇ ШКАЛИ ДО X2 (ВЕРХНЬОЇ ОСІ) ***
-    traces.forEach(trace => {
-        if (trace.y[0] === TOP_TIMELINE_GROUP_1 || trace.y[0] === TOP_TIMELINE_GROUP_2) {
-            trace.xaxis = 'x2'; 
-        }
-    });
-
     Plotly.newPlot("chart", traces, layout, {responsive: true});
     
     // Запуск таймера для пересування червоної лінії
@@ -341,9 +324,9 @@ function startClockUpdate() {
         Plotly.relayout("chart", {
             'shapes[0].x0': current,
             'shapes[0].x1': current,
-            // Оновлюємо також фігуру-розділювач Півночі, якщо вона є
-            'shapes[1].x0': current,
-            'shapes[1].x1': current,
+            // Якщо є розділювач півночі (у Combined Mode)
+            'shapes[1].x0': 1440,
+            'shapes[1].x1': 1440,
         });
 
     }, 60000); // Оновлюємо раз на хвилину
@@ -356,4 +339,3 @@ setInterval(() => loadPowerData(), 900000); // Автооновлення JSON �
 </script>
 </body>
 </html>
-
