@@ -92,7 +92,7 @@ async function loadPowerData() {
         let globalXMin = 0;
 
         if (isCombinedMode) {
-            // === РЕЖИМ 30 ГОДИН ===
+            // === РЕЖИМ 48 ГОДИН (сьогодні + завтра) ===
             chartTitle = `Графік на ${todayStr} та ${tomorrowStr}`;
             document.getElementById("updated").innerHTML += `<div class="info-mode">📅 Режим "Вечір": показуємо залишок сьогодні та весь завтрашній день</div>`;
 
@@ -241,8 +241,18 @@ function buildChart(traces, groups, xMin, xMax, shapes, isCombined) {
             ticktext: tickText,
             fixedrange: true,
             gridcolor: '#eee',
-            side: 'bottom',
-            mirror: 'allticks' // 🔹 дублюємо шкалу часу зверху
+            side: 'bottom'
+        },
+        // ДРУГА ШКАЛА ЧАСУ ЗВЕРХУ
+        xaxis2: {
+            range: [xMin, xMax],
+            tickvals: tickVals,
+            ticktext: tickText,
+            overlaying: 'x',   // використовує ті самі дані по X
+            side: 'top',       // розміщення зверху
+            fixedrange: true,
+            showgrid: false,
+            zeroline: false
         },
         yaxis: {
             title: "",
@@ -251,7 +261,7 @@ function buildChart(traces, groups, xMin, xMax, shapes, isCombined) {
             categoryarray: [...groups].reverse(),
             fixedrange: true
         },
-        margin: { t: 40, b: 40, l: 60, r: 20 },
+        margin: { t: 60, b: 40, l: 60, r: 20 }, // збільшив t, щоб не обрізати верхні підписи
         hovermode: 'closest',
         shapes: shapes,
         height: groups.length * 60 + 100 // Адаптивна висота графіку
