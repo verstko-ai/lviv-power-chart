@@ -79,7 +79,6 @@ async function loadPowerData() {
         let finalGroups = new Set(DEFAULT_TEMPLATE);
         
         // Знаходимо сьогоднішню дату в ключах JSON
-        // (форматуємо today назад в рядок для порівняння або порівнюємо об'єкти)
         const todayStr = dateKeys.find(k => parseDateKey(k).getTime() === today.getTime());
         
         // Перевіряємо, чи є завтра
@@ -228,8 +227,6 @@ function buildChart(traces, groups, xMin, xMax, shapes, isCombined) {
     shapes.push({
         type: "line",
         xref: "x",
-        // getCurrentTotalMinutes повертає час від початку сьогоднішнього дня (0..1440)
-        // Якщо ми дивимось на завтра, лінія "Зараз" залишиться в зоні сьогодні
         x0: getCurrentTotalMinutes(),
         x1: getCurrentTotalMinutes(),
         y0: -0.5,
@@ -243,7 +240,9 @@ function buildChart(traces, groups, xMin, xMax, shapes, isCombined) {
             tickvals: tickVals,
             ticktext: tickText,
             fixedrange: true,
-            gridcolor: '#eee'
+            gridcolor: '#eee',
+            side: 'bottom',
+            mirror: 'allticks' // 🔹 дублюємо шкалу часу зверху
         },
         yaxis: {
             title: "",
@@ -281,14 +280,6 @@ function startClockUpdate() {
     
     window.clockInterval = setInterval(() => {
         const current = getCurrentTotalMinutes();
-        // Оновлюємо останню фігуру в масиві shapes (це наша червона лінія)
-        // Примітка: Plotly.relayout складніший з масивами shapes, 
-        // тому найпростіше - просто перемалювати лінію, якщо є можливість,
-        // але для продуктивності спробуємо оновити конкретний атрибут.
-        
-        // Тут спрощений update - просто перезавантажимо дані, 
-        // або можна залишити статичну, якщо користувач не сидить годинами на сторінці.
-        // Для простоти - просто log, бо Plotly relayout складний для динамічних shapes index.
         console.log("Time update:", current);
     }, 60000);
 }
