@@ -25,11 +25,20 @@
         margin-bottom: 10px;
         flex-wrap: wrap;
         gap: 10px;
+        background: white;
+        padding: 10px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+
+    .header-info {
+        flex-grow: 1;
     }
 
     h1 { 
         margin: 0; 
-        font-size: 1.3rem; 
+        font-size: 1.2rem; 
+        color: #333;
     }
 
     #updated { 
@@ -38,37 +47,93 @@
         margin-top: 2px;
     }
 
+    /* Контейнер для кнопок управління */
+    .controls-wrapper {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+    }
+
     /* Стилізація вибору групи */
     .group-selector {
-        padding: 8px;
-        border: 1px solid #ccc;
+        padding: 8px 12px;
+        border: 1px solid #ddd;
         border-radius: 6px;
         font-size: 1rem;
-        background: white;
-        min-width: 120px;
+        background: #fff;
+        color: #333;
+        cursor: pointer;
+        outline: none;
+        transition: border-color 0.2s;
+    }
+    .group-selector:focus {
+        border-color: #0288d1;
+    }
+
+    /* Кнопка оновлення */
+    .refresh-btn {
+        padding: 8px 12px;
+        background: #f0f0f0;
+        border: 1px solid #ddd;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 1.1rem;
+        transition: all 0.2s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #555;
+    }
+    
+    .refresh-btn:hover:not(:disabled) {
+        background: #e0e0e0;
+        color: #000;
+        border-color: #ccc;
+    }
+
+    .refresh-btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+        background: #f9f9f9;
+    }
+
+    /* Анімація обертання */
+    .spin {
+        animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+        100% { transform: rotate(360deg); }
     }
 
     #chart { 
         width: 100%; 
-        flex-grow: 1; /* Графік займає весь доступний простір */
+        flex-grow: 1; 
         min-height: 400px; 
     }
 
     .error { color: #d32f2f; font-weight: bold; padding: 20px; background: #ffebee; border-radius: 4px; }
-    .info-mode { color: #0288d1; font-weight: bold; font-size: 0.8rem; margin-top: 5px; }
+    .info-mode { color: #0288d1; font-weight: bold; font-size: 0.75rem; margin-top: 2px; }
+    .info-badge { display: inline-block; background: #e1f5fe; color: #0277bd; padding: 2px 6px; border-radius: 4px; font-size: 0.7rem; margin-top: 2px;}
 </style>
 </head>
 <body>
 
 <div class="header-controls">
-    <div>
+    <div class="header-info">
         <h1 id="title">Завантаження...</h1>
         <div id="updated"></div>
     </div>
     
-    <select id="groupSelect" class="group-selector" onchange="highlightGroup(this.value)">
-        <option value="all">Всі групи</option>
+    <div class="controls-wrapper">
+        <select id="groupSelect" class="group-selector" onchange="highlightGroup(this.value)">
+            <option value="all">Всі групи</option>
         </select>
+
+        <button id="refreshBtn" class="refresh-btn" onclick="manualRefresh()" title="Оновити дані">
+            <span id="refreshIcon">🔄</span>
+        </button>
+    </div>
 </div>
 
 <div id="chart"></div>
@@ -85,8 +150,8 @@ const TOP_AXIS_ANCHOR = "AXIS_ACTIVATOR";
 
 const DEFAULT_TEMPLATE = ["1.1", "1.2", "2.1", "2.2", "3.1", "3.2", "4.1", "4.2", "5.1", "5.2", "6.1", "6.2"];
 
-// Змінна для зберігання всіх трасувань (для фільтрації)
-let currentTracesData = []; 
+// Змінна для збереження стану
+let isUpdating = false;
 
 function getGroupColor(groupName) {
     const match = groupName.match(/\d+/);
@@ -107,14 +172,45 @@ function parseDateKey(dateStr) {
     return new Date(parts[2], parts[1] - 1, parts[0]);
 }
 
+// *** ФУНКЦІЯ ПРИМУСОВОГО ОНОВЛЕННЯ ***
+async function manualRefresh() {
+    if (isUpdating) return; // Захист від подвійного кліку
+    
+    const btn = document.getElementById('refreshBtn');
+    const icon = document.getElementById('refreshIcon');
+    
+    isUpdating = true;
+    btn.disabled = true; // Блокуємо кнопку
+    icon.classList.add('spin'); // Запускаємо анімацію
+
+    try {
+        await loadPowerData(); // Завантажуємо дані
+        // Невеликий тайм-аут для візуального ефекту, щоб користувач бачив, що щось відбулось
+        await new Promise(r => setTimeout(r, 500)); 
+    } catch (e) {
+        console.error("Refresh failed", e);
+    } finally {
+        icon.classList.remove('spin');
+        
+        // ** ЗАХИСТ ВІД СПАМУ **
+        // Залишаємо кнопку неактивною ще на 10 секунд
+        setTimeout(() => {
+            btn.disabled = false;
+            isUpdating = false;
+        }, 10000);
+    }
+}
+
 async function loadPowerData() {
     try {
+        // Додаємо timestamp, щоб обійти кеш браузера
         const response = await fetch('./power_data.json?v=' + new Date().getTime());
         if (!response.ok) throw new Error(`Status ${response.status}`);
         const json = await response.json();
 
         const updateTime = json.updated_at_site || new Date(json.scan_date).toLocaleString('uk-UA');
-        document.getElementById("updated").textContent = `Оновлено: ${updateTime}`;
+        const updateElem = document.getElementById("updated");
+        updateElem.innerHTML = `Оновлено: ${updateTime}`;
 
         let dateKeys = Object.keys(json.schedules || {}).sort((a, b) => parseDateKey(a) - parseDateKey(b));
         
@@ -139,10 +235,7 @@ async function loadPowerData() {
 
         if (isCombinedMode) {
             chartTitle = `Графік на ${todayStr} та ${tomorrowStr}`;
-            const infoDiv = document.querySelector(".info-mode");
-            if (!infoDiv) {
-                 document.getElementById("updated").innerHTML += `<div class="info-mode">📅 Вечірній режим: сьогодні + завтра</div>`;
-            }
+            updateElem.innerHTML += `<br><span class="info-badge">🌙 Вечірній режим (30 год)</span>`;
 
             Object.keys(json.schedules[todayStr]).forEach(g => finalGroups.add(g));
             Object.keys(json.schedules[tomorrowStr]).forEach(g => finalGroups.add(g));
@@ -176,7 +269,7 @@ async function loadPowerData() {
         let rawGroups = [...finalGroups];
         let filteredGroups = rawGroups.filter(g => g && g.toString().trim() !== "" && g !== "0").sort();
 
-        // ** ОНОВЛЕННЯ DROPDOWN **
+        // Оновлення списку вибору
         updateGroupSelector(filteredGroups);
 
         // Активуємо верхню вісь
@@ -184,9 +277,6 @@ async function loadPowerData() {
             traces.push(createAxisActivatorTrace(globalXMin, globalXMax, filteredGroups[0]));
         }
 
-        // Зберігаємо дані трасувань глобально для швидкого доступу при зміні групи
-        currentTracesData = traces;
-        
         buildChart(traces, filteredGroups, globalXMin, globalXMax, layoutShapes, isCombinedMode);
 
         // Застосовуємо збережену групу
@@ -205,13 +295,17 @@ async function loadPowerData() {
     }
 }
 
-// ** ФУНКЦІЯ ОНОВЛЕННЯ SELECT **
 function updateGroupSelector(groups) {
     const select = document.getElementById('groupSelect');
     const currentVal = select.value;
     
-    // Зберігаємо "Всі групи"
-    select.innerHTML = '<option value="all">👁️ Всі групи</option>';
+    // Запам'ятовуємо, чи була вже ініціалізація, щоб не скидати вибір
+    if (select.options.length > 1 && currentVal !== 'all') {
+         // Якщо групи не змінилися радикально, можна не перемальовувати,
+         // але для простоти перемалюємо, зберігаючи вибір
+    }
+    
+    select.innerHTML = '<option value="all">👁️ Всі</option>';
     
     groups.forEach(g => {
         const option = document.createElement('option');
@@ -225,31 +319,19 @@ function updateGroupSelector(groups) {
     }
 }
 
-// ** ФУНКЦІЯ ПІДСВІЧУВАННЯ ГРУПИ **
 function highlightGroup(selectedGroup) {
-    // Зберігаємо вибір
     localStorage.setItem('selectedGroup', selectedGroup);
-
     const updateObj = { opacity: [] };
-    
-    // Проходимось по всіх трасуваннях на графіку
-    // document.getElementById('chart').data містить поточні дані Plotly
     const chartDiv = document.getElementById('chart');
     if (!chartDiv.data) return;
 
     const opacities = chartDiv.data.map(trace => {
-        // Пропускаємо технічні трасування (невидимі)
         if (trace.name === TOP_AXIS_ANCHOR) return 0;
-
-        // Якщо вибрано "Всі", повертаємо повну видимість
         if (selectedGroup === 'all') return 1;
-
-        // Перевіряємо, чи належить трасування вибраній групі
-        // y[0] містить назву групи для цього трасування
         if (trace.y && trace.y[0] == selectedGroup) {
-            return 1; // Повна яскравість
+            return 1; 
         } else {
-            return 0.1; // Тьмяне (майже прозоре)
+            return 0.1; 
         }
     });
 
@@ -337,8 +419,6 @@ function buildChart(traces, groups, xMin, xMax, shapes, isCombined) {
     
     shapes.forEach(s => { s.y1 = lineYMax; });
     
-    // Червона лінія "Зараз" з міткою часу
-    // Ми використовуємо дві лінії: суцільну і текстову анотацію (реалізовано через layout.annotations)
     const currentTime = getCurrentTotalMinutes();
     
     shapes.push({
@@ -386,7 +466,6 @@ function buildChart(traces, groups, xMin, xMax, shapes, isCombined) {
         hovermode: 'closest',
         shapes: shapes,
         height: totalGroups * 50 + 80,
-        // Анотація поточного часу зверху червоної лінії
         annotations: [{
             x: currentTime,
             y: lineYMax,
@@ -396,11 +475,11 @@ function buildChart(traces, groups, xMin, xMax, shapes, isCombined) {
             showarrow: false,
             yshift: 10,
             font: { color: '#d32f2f', size: 12, weight: 'bold' },
-            bgcolor: '#ffffff',
+            bgcolor: 'rgba(255,255,255,0.9)',
             bordercolor: '#d32f2f',
             borderwidth: 1,
             borderpad: 2,
-            opacity: 0.8
+            opacity: 1
         }]
     };
     
@@ -431,7 +510,6 @@ function startClockUpdate() {
             'shapes[0].x1': current,
             'annotations[0].x': current,
             'annotations[0].text': timeStr,
-            // Якщо є розділювач півночі
             'shapes[1].x0': 1440,
             'shapes[1].x1': 1440,
         }).catch(() => {});
