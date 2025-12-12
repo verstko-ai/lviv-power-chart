@@ -5,265 +5,72 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Графік відключень</title>
 <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+
 <style>
-    body { font-family: 'Segoe UI', Arial, sans-serif; margin: 0; padding: 20px; background: #fafafa; }
-    h1 { margin-bottom: 5px; font-size: 1.5rem; }
-    #updated { margin-bottom: 15px; color: #666; font-size: 0.9rem; }
-    #chart { width: 100%; height: 85vh; min-height: 500px; }
-    .error { color: #d32f2f; font-weight: bold; padding: 20px; background: #ffebee; border-radius: 4px; }
-    .info-mode { color: #0288d1; font-weight: bold; font-size: 0.9rem; margin-top: 5px; }
+    /* Загальні стилі */
+    body { 
+        font-family: 'Segoe UI', Arial, sans-serif; 
+        margin: 0; 
+        padding: 15px; 
+        background: #fafafa; 
+        overflow-x: hidden; /* Уникаємо горизонтальної прокрутки */
+    }
+
+    h1 { 
+        margin-bottom: 5px; 
+        font-size: 1.4rem; 
+        word-wrap: break-word;
+        text-align: center;
+    }
+
+    #updated { 
+        margin-bottom: 10px; 
+        color: #666; 
+        font-size: 0.9rem; 
+        text-align: center;
+    }
+
+    /* Адаптивний контейнер для графіка */
+    #chart { 
+        width: 100%; 
+        height: auto; 
+        min-height: 400px; 
+        max-height: 85vh; /* Обмежуємо, щоб не вилазив за екран */
+        margin-bottom: 20px;
+    }
+
+    /* Plotly інколи обрізає верхню вісь – фіксуємо */
+    .main-svg {
+        overflow: visible !important;
+    }
+
+    .error { 
+        color: #d32f2f; 
+        font-weight: bold; 
+        padding: 20px; 
+        background: #ffebee; 
+        border-radius: 4px; 
+    }
+
+    .info-mode { 
+        color: #0288d1; 
+        font-weight: bold; 
+        font-size: 0.9rem; 
+        margin-top: 5px;
+        text-align: center;
+    }
+
+    /* Мобільні покращення */
+    @media (max-width: 600px) {
+        body { padding: 10px; }
+        h1 { font-size: 1.2rem; }
+        #chart { min-height: 350px; }
+    }
 </style>
+
 </head>
 <body>
 
 <h1 id="title">Завантаження...</h1>
 <div id="updated"></div>
 <div id="chart"></div>
-
-<script>
-// --- НАЛАШТУВАННЯ ---
-const LINE_WIDTH = 45; 
-const PALETTE = ['#FFA500', '#32CD32', '#1E90FF', '#9370DB', '#FF69B4', '#00CED1'];
-const COLOR_POWER_OFF = "#333333"; 
-const COLOR_MIDNIGHT = "#00008B";
-
-// Шаблон груп
-const DEFAULT_TEMPLATE = ["1.1", "1.2", "2.1", "2.2", "3.1", "3.2", "4.1", "4.2", "5.1", "5.2", "6.1", "6.2"];
-
-function getGroupColor(groupName) {
-    const match = groupName.match(/\d+/);
-    if (match) {
-        const num = parseInt(match[0]);
-        return PALETTE[(num - 1) % PALETTE.length];
-    }
-    return PALETTE[0];
-}
-
-function toMinutes(t) {
-    const [h, m] = t.split(":").map(Number);
-    return h * 60 + m;
-}
-
-function parseDateKey(dateStr) {
-    const parts = dateStr.split(".");
-    return new Date(parts[2], parts[1] - 1, parts[0]);
-}
-
-async function loadPowerData() {
-    try {
-        const response = await fetch('./power_data.json?v=' + new Date().getTime());
-        if (!response.ok) throw new Error(`Status ${response.status}`);
-        const json = await response.json();
-
-        const updateTime = json.updated_at_site || new Date(json.scan_date).toLocaleString('uk-UA');
-        document.getElementById("updated").textContent = `Оновлено: ${updateTime}`;
-
-        let dateKeys = Object.keys(json.schedules || {}).sort((a, b) => parseDateKey(a) - parseDateKey(b));
-        if (dateKeys.length === 0) throw new Error("Дані порожні або неправильний формат.");
-
-        const today = new Date();
-        today.setHours(0,0,0,0);
-
-        let traces = [];
-        let layoutShapes = [];
-        let finalGroups = new Set(DEFAULT_TEMPLATE);
-
-        const todayStr = dateKeys.find(k => parseDateKey(k).getTime() === today.getTime());
-
-        const tomorrow = new Date(today);
-        tomorrow.setDate(today.getDate() + 1);
-        const tomorrowStr = dateKeys.find(k => parseDateKey(k).getTime() === tomorrow.getTime());
-
-        let isCombinedMode = (todayStr && tomorrowStr);
-        let chartTitle = "";
-        let globalXMax = 1440;
-        let globalXMin = 0;
-
-        if (isCombinedMode) {
-            chartTitle = `Графік на ${todayStr} та ${tomorrowStr}`;
-            document.getElementById("updated").innerHTML += `<div class="info-mode">📅 Режим "Вечір": показуємо залишок сьогодні + весь завтрашній день</div>`;
-
-            Object.keys(json.schedules[todayStr]).forEach(g => finalGroups.add(g));
-            Object.keys(json.schedules[tomorrowStr]).forEach(g => finalGroups.add(g));
-
-            const nowHour = new Date().getHours();
-            const startLookback = Math.max(0, nowHour - 6);
-            globalXMin = startLookback * 60;
-            globalXMax = 2880;
-
-            processDayData(json.schedules[todayStr], 0, traces, finalGroups);
-            processDayData(json.schedules[tomorrowStr], 1440, traces, finalGroups);
-
-            layoutShapes.push({
-                type: 'line',
-                x0: 1440, x1: 1440,
-                y0: -0.5, y1: finalGroups.size + 0.5,
-                line: { color: COLOR_MIDNIGHT, width: 3, dash: 'dot' }
-            });
-
-        } else {
-            const targetDate = todayStr || dateKeys[0];
-            chartTitle = `Графік на ${targetDate}`;
-            Object.keys(json.schedules[targetDate]).forEach(g => finalGroups.add(g));
-            processDayData(json.schedules[targetDate], 0, traces, finalGroups);
-        }
-
-        document.getElementById("title").innerText = chartTitle;
-
-        const sortedGroups = [...finalGroups].sort();
-
-        buildChart(traces, sortedGroups, globalXMin, globalXMax, layoutShapes, isCombinedMode);
-
-    } catch (error) {
-        console.error(error);
-        document.getElementById("updated").innerHTML = `<span class="error">Помилка: ${error.message}</span>`;
-    }
-}
-
-function processDayData(schedule, offset, traces, allGroups) {
-    allGroups.forEach(group => {
-        const intervalsStr = schedule[group] || [];
-        const groupColor = getGroupColor(group);
-        
-        let dayStart = 0 + offset;
-        let dayEnd = 1440 + offset;
-
-        if (intervalsStr.length > 0) {
-            let last = dayStart;
-            
-            const outages = intervalsStr.map(interval => {
-                const [s, e] = interval.split("-");
-                return [toMinutes(s) + offset, toMinutes(e) + offset];
-            });
-
-            outages.forEach(([start, end]) => {
-                if (start > last) {
-                    traces.push(createTrace(group, last, start, groupColor, "Світло є"));
-                }
-                const timeLabel = formatTime(start - offset) + " - " + formatTime(end - offset);
-                traces.push(createTrace(group, start, end, "#333333", `ВІДКЛЮЧЕННЯ: ${timeLabel}`));
-                last = end;
-            });
-
-            if (last < dayEnd) {
-                traces.push(createTrace(group, last, dayEnd, groupColor, "Світло є"));
-            }
-        } else {
-            traces.push(createTrace(group, dayStart, dayEnd, groupColor, "Без відключень"));
-        }
-    });
-}
-
-function createTrace(group, start, end, color, text) {
-    return {
-        x: [start, end],
-        y: [group, group],
-        mode: "lines",
-        line: { width: LINE_WIDTH, color: color },
-        hoverinfo: "text",
-        text: `${group}: ${text}`,
-        showlegend: false
-    };
-}
-
-function buildChart(traces, groups, xMin, xMax, shapes, isCombined) {
-    const tickVals = [];
-    const tickText = [];
-
-    for (let i = 0; i <= xMax; i += 60) {
-        if (i < xMin) continue;
-        
-        tickVals.push(i);
-        
-        let hour = Math.floor(i / 60);
-        let displayHour = hour % 24;
-        let suffix = "";
-        
-        if (isCombined) {
-            if (hour === 0) suffix = " (Сьогодні)";
-            if (hour === 24) suffix = " (Завтра)";
-        }
-        
-        tickText.push(`${displayHour.toString().padStart(2, '0')}:00${suffix}`);
-    }
-
-    shapes.forEach(s => {
-        s.y1 = groups.length - 0.5;
-    });
-
-    shapes.push({
-        type: "line",
-        xref: "x",
-        x0: getCurrentTotalMinutes(),
-        x1: getCurrentTotalMinutes(),
-        y0: -0.5,
-        y1: groups.length - 0.5,
-        line: { color: "red", width: 2, dash: "dash" }
-    });
-
-    const layout = {
-        xaxis: {
-            range: [xMin, xMax],
-            tickvals: tickVals,
-            ticktext: tickText,
-            fixedrange: true,
-            gridcolor: '#eee',
-            side: 'bottom'
-        },
-
-        // 🟦 ДОДАНО: ДРУГА ВІСЬ ЧАСУ ЗВЕРХУ
-        xaxis2: {
-            range: [xMin, xMax],
-            tickvals: tickVals,
-            ticktext: tickText,
-            overlaying: 'x',
-            side: 'top',
-            fixedrange: true,
-            showgrid: false,
-            zeroline: false
-        },
-
-        yaxis: {
-            title: "",
-            type: "category",
-            categoryorder: "array",
-            categoryarray: [...groups].reverse(),
-            fixedrange: true
-        },
-
-        margin: { t: 80, b: 40, l: 60, r: 20 }, // ↑ збільшено верхній відступ
-        hovermode: 'closest',
-        shapes: shapes,
-        height: groups.length * 60 + 100
-    };
-
-    Plotly.newPlot("chart", traces, layout, {responsive: true});
-    
-    startClockUpdate();
-}
-
-function formatTime(minutes) {
-    const h = Math.floor(minutes / 60);
-    const m = minutes % 60;
-    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
-}
-
-function getCurrentTotalMinutes() {
-    const now = new Date();
-    return now.getHours() * 60 + now.getMinutes();
-}
-
-function startClockUpdate() {
-    if (window.clockInterval) clearInterval(window.clockInterval);
-    
-    window.clockInterval = setInterval(() => {
-        const current = getCurrentTotalMinutes();
-        console.log("Time update:", current);
-    }, 60000);
-}
-
-loadPowerData();
-setInterval(() => loadPowerData(), 900000);
-</script>
-</body>
-</html>
