@@ -10,12 +10,12 @@
     body { 
         font-family: 'Segoe UI', Arial, sans-serif; 
         margin: 0; 
-        padding: 10px; /* Зменшив загальний відступ для мобільних */
+        padding: 10px; 
         background: #fafafa; 
     }
     h1 { 
         margin-bottom: 5px; 
-        font-size: 1.4rem; /* Трохи менший заголовок */
+        font-size: 1.4rem; 
     }
     #updated { 
         margin-bottom: 15px; 
@@ -24,8 +24,8 @@
     }
     #chart { 
         width: 100%; 
-        height: auto; /* Використовуємо auto для адаптивної висоти */
-        min-height: 400px; /* Мінімальна висота для мобільних */
+        height: auto; 
+        min-height: 400px; 
     }
     .error { color: #d32f2f; font-weight: bold; padding: 20px; background: #ffebee; border-radius: 4px; }
     .info-mode { color: #0288d1; font-weight: bold; font-size: 0.8rem; margin-top: 5px; }
@@ -134,7 +134,10 @@ async function loadPowerData() {
 
         document.getElementById("title").innerText = chartTitle;
 
-        const sortedGroups = [...finalGroups].sort();
+        // *** ВИПРАВЛЕННЯ: Фільтруємо недійсні групи (0, "") ***
+        let rawGroups = [...finalGroups];
+        let filteredGroups = rawGroups.filter(g => g && g.trim() !== "" && g !== "0"); 
+        const sortedGroups = filteredGroups.sort();
 
         // *** АКТИВУЄМО ВЕРХНЮ ВІСЬ НЕВИДИМОЮ ТРАСУВАННЯМ ***
         traces.push(createAxisAnchor(globalXMin, globalXMax));
@@ -151,7 +154,7 @@ async function loadPowerData() {
 function createAxisAnchor(xMin, xMax) {
     return {
         x: [xMin, xMax],
-        y: [0, 0], // Координата Y не має значення, оскільки вона не прив'язана до категорії
+        y: [0, 0], 
         mode: "lines",
         line: { width: 0.1, color: 'rgba(0,0,0,0)' }, 
         hoverinfo: "none",
@@ -255,8 +258,8 @@ function buildChart(traces, groups, xMin, xMax, shapes, isCombined) {
     });
 
     const layout = {
-        // Забезпечуємо, щоб верхня вісь X була видимою, налаштовуючи t (top) margin
-        margin: { t: 40, b: 40, l: 60, r: 20 },
+        // Збільшуємо верхній відступ для верхньої шкали (xaxis2)
+        margin: { t: 50, b: 40, l: 60, r: 20 },
         
         xaxis: {
             title: "", // *** ВИПРАВЛЕНО: Видалення підпису осі X ***
@@ -275,7 +278,7 @@ function buildChart(traces, groups, xMin, xMax, shapes, isCombined) {
             showgrid: true,
             zeroline: false
         },
-        // *** ДОДАЄМО ДРУГУ ВІСЬ X ЗВЕРХУ ***
+        // *** АКТИВОВУЄМО ДРУГУ ВІСЬ X ЗВЕРХУ ***
         xaxis2: {
             title: "", // *** ВИПРАВЛЕНО: Видалення підпису осі X2 ***
             overlaying: 'x', 
@@ -293,6 +296,7 @@ function buildChart(traces, groups, xMin, xMax, shapes, isCombined) {
         },
         hovermode: 'closest',
         shapes: shapes,
+        // Висота адаптується під кількість груп
         height: totalGroups * 50 + 100 
     };
     
