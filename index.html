@@ -11,29 +11,66 @@
         margin: 0; 
         padding: 10px; 
         background: #fafafa; 
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        box-sizing: border-box;
     }
+    
+    /* Header Container */
+    .header-controls {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 10px;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+
     h1 { 
-        margin-bottom: 5px; 
-        font-size: 1.4rem; 
+        margin: 0; 
+        font-size: 1.3rem; 
     }
+
     #updated { 
-        margin-bottom: 15px; 
         color: #666; 
-        font-size: 0.8rem; 
+        font-size: 0.75rem; 
+        margin-top: 2px;
     }
+
+    /* Стилізація вибору групи */
+    .group-selector {
+        padding: 8px;
+        border: 1px solid #ccc;
+        border-radius: 6px;
+        font-size: 1rem;
+        background: white;
+        min-width: 120px;
+    }
+
     #chart { 
         width: 100%; 
-        height: auto; 
+        flex-grow: 1; /* Графік займає весь доступний простір */
         min-height: 400px; 
     }
+
     .error { color: #d32f2f; font-weight: bold; padding: 20px; background: #ffebee; border-radius: 4px; }
     .info-mode { color: #0288d1; font-weight: bold; font-size: 0.8rem; margin-top: 5px; }
 </style>
 </head>
 <body>
 
-<h1 id="title">Завантаження...</h1>
-<div id="updated"></div>
+<div class="header-controls">
+    <div>
+        <h1 id="title">Завантаження...</h1>
+        <div id="updated"></div>
+    </div>
+    
+    <select id="groupSelect" class="group-selector" onchange="highlightGroup(this.value)">
+        <option value="all">Всі групи</option>
+        </select>
+</div>
+
 <div id="chart"></div>
 
 <script>
@@ -43,7 +80,13 @@ const PALETTE = ['#FFA500', '#32CD32', '#1E90FF', '#9370DB', '#FF69B4', '#00CED1
 const COLOR_POWER_OFF = "#333333"; 
 const COLOR_MIDNIGHT = "#00008B"; 
 
+// Невидимий елемент для активації осі X2
+const TOP_AXIS_ANCHOR = "AXIS_ACTIVATOR";
+
 const DEFAULT_TEMPLATE = ["1.1", "1.2", "2.1", "2.2", "3.1", "3.2", "4.1", "4.2", "5.1", "5.2", "6.1", "6.2"];
+
+// Змінна для зберігання всіх трасувань (для фільтрації)
+let currentTracesData = []; 
 
 function getGroupColor(groupName) {
     const match = groupName.match(/\d+/);
@@ -96,7 +139,10 @@ async function loadPowerData() {
 
         if (isCombinedMode) {
             chartTitle = `Графік на ${todayStr} та ${tomorrowStr}`;
-            document.getElementById("updated").innerHTML += `<div class="info-mode">📅 Режим "Вечір": показуємо залишок сьогодні та весь завтрашній день</div>`;
+            const infoDiv = document.querySelector(".info-mode");
+            if (!infoDiv) {
+                 document.getElementById("updated").innerHTML += `<div class="info-mode">📅 Вечірній режим: сьогодні + завтра</div>`;
+            }
 
             Object.keys(json.schedules[todayStr]).forEach(g => finalGroups.add(g));
             Object.keys(json.schedules[tomorrowStr]).forEach(g => finalGroups.add(g));
@@ -126,18 +172,32 @@ async function loadPowerData() {
 
         document.getElementById("title").innerText = chartTitle;
 
-        // 1. Фільтруємо групи (видаляємо пусті та '0')
+        // Фільтрація і сортування груп
         let rawGroups = [...finalGroups];
-        let filteredGroups = rawGroups.filter(g => g && g.toString().trim() !== "" && g !== "0"); 
-        const sortedGroups = filteredGroups.sort();
+        let filteredGroups = rawGroups.filter(g => g && g.toString().trim() !== "" && g !== "0").sort();
 
-        // 2. Створюємо невидиме трасування для активації верхньої осі
-        // ВАЖЛИВО: Ми прив'язуємо його до ПЕРШОЇ існуючої групи, щоб не створювати нову категорію
-        if (sortedGroups.length > 0) {
-            traces.push(createAxisActivatorTrace(globalXMin, globalXMax, sortedGroups[0]));
+        // ** ОНОВЛЕННЯ DROPDOWN **
+        updateGroupSelector(filteredGroups);
+
+        // Активуємо верхню вісь
+        if (filteredGroups.length > 0) {
+            traces.push(createAxisActivatorTrace(globalXMin, globalXMax, filteredGroups[0]));
         }
 
-        buildChart(traces, sortedGroups, globalXMin, globalXMax, layoutShapes, isCombinedMode);
+        // Зберігаємо дані трасувань глобально для швидкого доступу при зміні групи
+        currentTracesData = traces;
+        
+        buildChart(traces, filteredGroups, globalXMin, globalXMax, layoutShapes, isCombinedMode);
+
+        // Застосовуємо збережену групу
+        const savedGroup = localStorage.getItem('selectedGroup');
+        if (savedGroup) {
+            const select = document.getElementById('groupSelect');
+            if (select.querySelector(`option[value="${savedGroup}"]`)) {
+                select.value = savedGroup;
+                highlightGroup(savedGroup);
+            }
+        }
 
     } catch (error) {
         console.error(error);
@@ -145,35 +205,82 @@ async function loadPowerData() {
     }
 }
 
-// Функція для створення невидимого трасування, яке вмикає XAxis2
+// ** ФУНКЦІЯ ОНОВЛЕННЯ SELECT **
+function updateGroupSelector(groups) {
+    const select = document.getElementById('groupSelect');
+    const currentVal = select.value;
+    
+    // Зберігаємо "Всі групи"
+    select.innerHTML = '<option value="all">👁️ Всі групи</option>';
+    
+    groups.forEach(g => {
+        const option = document.createElement('option');
+        option.value = g;
+        option.text = `Група ${g}`;
+        select.appendChild(option);
+    });
+
+    if (currentVal && groups.includes(currentVal)) {
+        select.value = currentVal;
+    }
+}
+
+// ** ФУНКЦІЯ ПІДСВІЧУВАННЯ ГРУПИ **
+function highlightGroup(selectedGroup) {
+    // Зберігаємо вибір
+    localStorage.setItem('selectedGroup', selectedGroup);
+
+    const updateObj = { opacity: [] };
+    
+    // Проходимось по всіх трасуваннях на графіку
+    // document.getElementById('chart').data містить поточні дані Plotly
+    const chartDiv = document.getElementById('chart');
+    if (!chartDiv.data) return;
+
+    const opacities = chartDiv.data.map(trace => {
+        // Пропускаємо технічні трасування (невидимі)
+        if (trace.name === TOP_AXIS_ANCHOR) return 0;
+
+        // Якщо вибрано "Всі", повертаємо повну видимість
+        if (selectedGroup === 'all') return 1;
+
+        // Перевіряємо, чи належить трасування вибраній групі
+        // y[0] містить назву групи для цього трасування
+        if (trace.y && trace.y[0] == selectedGroup) {
+            return 1; // Повна яскравість
+        } else {
+            return 0.1; // Тьмяне (майже прозоре)
+        }
+    });
+
+    Plotly.restyle('chart', { opacity: opacities });
+}
+
 function createAxisActivatorTrace(xMin, xMax, targetGroup) {
     return {
         x: [xMin, xMax],
-        y: [targetGroup, targetGroup], // Прив'язуємо до існуючої групи!
+        y: [targetGroup, targetGroup], 
         mode: "lines",
-        line: { width: 0, color: 'rgba(0,0,0,0)' }, // Повністю прозоре
+        line: { width: 0, color: 'rgba(0,0,0,0)' }, 
         opacity: 0,
         hoverinfo: "none",
         showlegend: false,
-        xaxis: 'x2', // Це трасування належить верхній осі
-        yaxis: 'y'   // Але спільній осі Y
+        xaxis: 'x2', 
+        yaxis: 'y',
+        name: TOP_AXIS_ANCHOR
     };
 }
 
 function processDayData(schedule, offset, traces, allGroups) {
     allGroups.forEach(group => {
-        // Пропускаємо сміття
         if (!group || group === "0") return;
-
         const intervalsStr = schedule[group] || [];
         const groupColor = getGroupColor(group);
-        
         let dayStart = 0 + offset;
         let dayEnd = 1440 + offset;
 
         if (intervalsStr.length > 0) {
             let last = dayStart;
-            
             const outages = intervalsStr.map(interval => {
                 const [s, e] = interval.split("-");
                 return [toMinutes(s) + offset, toMinutes(e) + offset];
@@ -187,7 +294,6 @@ function processDayData(schedule, offset, traces, allGroups) {
                 traces.push(createTrace(group, start, end, COLOR_POWER_OFF, `ВІДКЛЮЧЕННЯ: ${timeLabel}`));
                 last = end;
             });
-
             if (last < dayEnd) {
                 traces.push(createTrace(group, last, dayEnd, groupColor, "Світло є"));
             }
@@ -215,41 +321,38 @@ function buildChart(traces, groups, xMin, xMax, shapes, isCombined) {
     
     for (let i = 0; i <= xMax; i += 60) {
         if (i < xMin) continue;
-        
         tickVals.push(i);
         let hour = Math.floor(i / 60);
         let displayHour = hour % 24;
         let suffix = "";
-        
         if (isCombined) {
             if (hour === 0) suffix = " (Сьогодні)";
             if (hour === 24) suffix = " (ЗАВТРА)";
         }
-        
         tickText.push(`${displayHour.toString().padStart(2, '0')}:00${suffix}`);
     }
 
     const totalGroups = groups.length;
     const lineYMax = totalGroups - 0.5;
     
-    shapes.forEach(s => {
-        s.y1 = lineYMax;
-    });
+    shapes.forEach(s => { s.y1 = lineYMax; });
+    
+    // Червона лінія "Зараз" з міткою часу
+    // Ми використовуємо дві лінії: суцільну і текстову анотацію (реалізовано через layout.annotations)
+    const currentTime = getCurrentTotalMinutes();
     
     shapes.push({
         type: "line",
         xref: "x",
-        x0: getCurrentTotalMinutes(),
-        x1: getCurrentTotalMinutes(),
+        x0: currentTime,
+        x1: currentTime,
         y0: -0.5,
         y1: lineYMax,
-        line: { color: "red", width: 2, dash: "dash" }
+        line: { color: "#d32f2f", width: 2, dash: "solid" }
     });
 
     const layout = {
-        margin: { t: 50, b: 40, l: 40, r: 10 }, // Оптимізовані відступи
-        
-        // Нижня вісь X
+        margin: { t: 50, b: 40, l: 40, r: 10 },
         xaxis: {
             title: "",
             range: [xMin, xMax], 
@@ -259,8 +362,6 @@ function buildChart(traces, groups, xMin, xMax, shapes, isCombined) {
             gridcolor: '#eee',
             showgrid: true
         },
-        
-        // Вісь Y
         yaxis: {
             title: "",
             type: "category",
@@ -270,8 +371,6 @@ function buildChart(traces, groups, xMin, xMax, shapes, isCombined) {
             showgrid: true,
             zeroline: false
         },
-        
-        // ВЕРХНЯ вісь X (XAxis2)
         xaxis2: {
             title: "",
             overlaying: 'x', 
@@ -280,17 +379,31 @@ function buildChart(traces, groups, xMin, xMax, shapes, isCombined) {
             tickvals: tickVals,
             ticktext: tickText,
             fixedrange: true,
-            showgrid: false, // Сітка тільки від нижньої осі, щоб не дублювати
+            showgrid: false,
             zeroline: false,
             automargin: true 
         },
-        
         hovermode: 'closest',
         shapes: shapes,
-        height: totalGroups * 50 + 80 // Висота підлаштовується
+        height: totalGroups * 50 + 80,
+        // Анотація поточного часу зверху червоної лінії
+        annotations: [{
+            x: currentTime,
+            y: lineYMax,
+            xref: 'x',
+            yref: 'y',
+            text: formatTime(currentTime % 1440),
+            showarrow: false,
+            yshift: 10,
+            font: { color: '#d32f2f', size: 12, weight: 'bold' },
+            bgcolor: '#ffffff',
+            bordercolor: '#d32f2f',
+            borderwidth: 1,
+            borderpad: 2,
+            opacity: 0.8
+        }]
     };
     
-    // config: {responsive: true} обов'язково для адаптивності
     Plotly.newPlot("chart", traces, layout, {responsive: true, displayModeBar: false});
     
     startClockUpdate();
@@ -311,12 +424,17 @@ function startClockUpdate() {
     if (window.clockInterval) clearInterval(window.clockInterval);
     window.clockInterval = setInterval(() => {
         const current = getCurrentTotalMinutes();
+        const timeStr = formatTime(current % 1440);
+        
         Plotly.relayout("chart", {
             'shapes[0].x0': current,
             'shapes[0].x1': current,
-            'shapes[1].x0': 1440, // Якщо є розділювач
+            'annotations[0].x': current,
+            'annotations[0].text': timeStr,
+            // Якщо є розділювач півночі
+            'shapes[1].x0': 1440,
             'shapes[1].x1': 1440,
-        }).catch(() => {}); // catch помилок якщо shapes[1] не існує
+        }).catch(() => {});
     }, 60000);
 }
 
