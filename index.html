@@ -6,7 +6,6 @@
 <title>Графік відключень</title>
 <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
 <style>
-    /* *** АДАПТИВНІ ЗМІНИ CSS *** */
     body { 
         font-family: 'Segoe UI', Arial, sans-serif; 
         margin: 0; 
@@ -39,15 +38,11 @@
 
 <script>
 // --- НАЛАШТУВАННЯ ---
-const LINE_WIDTH = 30; // Зменшено ширину лінії для мобільного вигляду
+const LINE_WIDTH = 30; 
 const PALETTE = ['#FFA500', '#32CD32', '#1E90FF', '#9370DB', '#FF69B4', '#00CED1'];
 const COLOR_POWER_OFF = "#333333"; 
-const COLOR_MIDNIGHT = "#00008B"; // Колір розділювача днів
+const COLOR_MIDNIGHT = "#00008B"; 
 
-// *** НОВА КОНСТАНТА: Невидимий елемент для активації осі X2 ***
-const TOP_AXIS_ANCHOR = "AXIS_ACTIVATOR";
-
-// Шаблон груп
 const DEFAULT_TEMPLATE = ["1.1", "1.2", "2.1", "2.2", "3.1", "3.2", "4.1", "4.2", "5.1", "5.2", "6.1", "6.2"];
 
 function getGroupColor(groupName) {
@@ -64,10 +59,8 @@ function toMinutes(t) {
     return h * 60 + m;
 }
 
-// Парсинг дати з формату "DD.MM.YYYY" в Date об'єкт
 function parseDateKey(dateStr) {
     const parts = dateStr.split(".");
-    // parts[2] = YYYY, parts[1] = MM, parts[0] = DD
     return new Date(parts[2], parts[1] - 1, parts[0]);
 }
 
@@ -92,7 +85,6 @@ async function loadPowerData() {
         let finalGroups = new Set(DEFAULT_TEMPLATE);
         
         const todayStr = dateKeys.find(k => parseDateKey(k).getTime() === today.getTime());
-        
         const tomorrow = new Date(today);
         tomorrow.setDate(today.getDate() + 1);
         const tomorrowStr = dateKeys.find(k => parseDateKey(k).getTime() === tomorrow.getTime());
@@ -134,13 +126,16 @@ async function loadPowerData() {
 
         document.getElementById("title").innerText = chartTitle;
 
-        // *** ВИПРАВЛЕННЯ: Фільтруємо недійсні групи (0, "") ***
+        // 1. Фільтруємо групи (видаляємо пусті та '0')
         let rawGroups = [...finalGroups];
-        let filteredGroups = rawGroups.filter(g => g && g.trim() !== "" && g !== "0"); 
+        let filteredGroups = rawGroups.filter(g => g && g.toString().trim() !== "" && g !== "0"); 
         const sortedGroups = filteredGroups.sort();
 
-        // *** АКТИВУЄМО ВЕРХНЮ ВІСЬ НЕВИДИМОЮ ТРАСУВАННЯМ ***
-        traces.push(createAxisAnchor(globalXMin, globalXMax));
+        // 2. Створюємо невидиме трасування для активації верхньої осі
+        // ВАЖЛИВО: Ми прив'язуємо його до ПЕРШОЇ існуючої групи, щоб не створювати нову категорію
+        if (sortedGroups.length > 0) {
+            traces.push(createAxisActivatorTrace(globalXMin, globalXMax, sortedGroups[0]));
+        }
 
         buildChart(traces, sortedGroups, globalXMin, globalXMax, layoutShapes, isCombinedMode);
 
@@ -150,24 +145,26 @@ async function loadPowerData() {
     }
 }
 
-// *** НОВА ДОПОМІЖНА ФУНКЦІЯ: Трасування-заглушка для активації XAXIS2 ***
-function createAxisAnchor(xMin, xMax) {
+// Функція для створення невидимого трасування, яке вмикає XAxis2
+function createAxisActivatorTrace(xMin, xMax, targetGroup) {
     return {
         x: [xMin, xMax],
-        y: [0, 0], 
+        y: [targetGroup, targetGroup], // Прив'язуємо до існуючої групи!
         mode: "lines",
-        line: { width: 0.1, color: 'rgba(0,0,0,0)' }, 
+        line: { width: 0, color: 'rgba(0,0,0,0)' }, // Повністю прозоре
+        opacity: 0,
         hoverinfo: "none",
         showlegend: false,
-        xaxis: 'x2', // Прив'язуємо до верхньої осі
-        name: TOP_AXIS_ANCHOR
+        xaxis: 'x2', // Це трасування належить верхній осі
+        yaxis: 'y'   // Але спільній осі Y
     };
 }
 
-
-// Функція перетворення даних дня в смужки
 function processDayData(schedule, offset, traces, allGroups) {
     allGroups.forEach(group => {
+        // Пропускаємо сміття
+        if (!group || group === "0") return;
+
         const intervalsStr = schedule[group] || [];
         const groupColor = getGroupColor(group);
         
@@ -184,10 +181,8 @@ function processDayData(schedule, offset, traces, allGroups) {
 
             outages.forEach(([start, end]) => {
                 if (start > last) {
-                    // Світло Є
                     traces.push(createTrace(group, last, start, groupColor, "Світло є"));
                 }
-                // Світла НЕМАЄ
                 const timeLabel = formatTime(start - offset) + " - " + formatTime(end - offset);
                 traces.push(createTrace(group, start, end, COLOR_POWER_OFF, `ВІДКЛЮЧЕННЯ: ${timeLabel}`));
                 last = end;
@@ -197,7 +192,6 @@ function processDayData(schedule, offset, traces, allGroups) {
                 traces.push(createTrace(group, last, dayEnd, groupColor, "Світло є"));
             }
         } else {
-            // Немає вимкнень цілий день
             traces.push(createTrace(group, dayStart, dayEnd, groupColor, "Без відключень"));
         }
     });
@@ -216,16 +210,13 @@ function createTrace(group, start, end, color, text) {
 }
 
 function buildChart(traces, groups, xMin, xMax, shapes, isCombined) {
-    // Генерація підписів осі X
     const tickVals = [];
     const tickText = [];
     
-    // Робимо кроки по годині
     for (let i = 0; i <= xMax; i += 60) {
         if (i < xMin) continue;
         
         tickVals.push(i);
-        
         let hour = Math.floor(i / 60);
         let displayHour = hour % 24;
         let suffix = "";
@@ -241,12 +232,10 @@ function buildChart(traces, groups, xMin, xMax, shapes, isCombined) {
     const totalGroups = groups.length;
     const lineYMax = totalGroups - 0.5;
     
-    // Оновлюємо висоту ліній (сітки та півночі)
     shapes.forEach(s => {
         s.y1 = lineYMax;
     });
     
-    // Додаємо лінію "Зараз"
     shapes.push({
         type: "line",
         xref: "x",
@@ -258,19 +247,22 @@ function buildChart(traces, groups, xMin, xMax, shapes, isCombined) {
     });
 
     const layout = {
-        // Збільшуємо верхній відступ для верхньої шкали (xaxis2)
-        margin: { t: 50, b: 40, l: 60, r: 20 },
+        margin: { t: 50, b: 40, l: 40, r: 10 }, // Оптимізовані відступи
         
+        // Нижня вісь X
         xaxis: {
-            title: "", // *** ВИПРАВЛЕНО: Видалення підпису осі X ***
+            title: "",
             range: [xMin, xMax], 
             tickvals: tickVals,
             ticktext: tickText,
             fixedrange: true,
-            gridcolor: '#eee'
+            gridcolor: '#eee',
+            showgrid: true
         },
+        
+        // Вісь Y
         yaxis: {
-            title: "", // *** ВИПРАВЛЕНО: Видалення підпису осі Y ***
+            title: "",
             type: "category",
             categoryorder: "array",
             categoryarray: [...groups].reverse(),
@@ -278,31 +270,29 @@ function buildChart(traces, groups, xMin, xMax, shapes, isCombined) {
             showgrid: true,
             zeroline: false
         },
-        // *** АКТИВОВУЄМО ДРУГУ ВІСЬ X ЗВЕРХУ ***
+        
+        // ВЕРХНЯ вісь X (XAxis2)
         xaxis2: {
-            title: "", // *** ВИПРАВЛЕНО: Видалення підпису осі X2 ***
+            title: "",
             overlaying: 'x', 
             side: 'top',     
             range: [xMin, xMax],
             tickvals: tickVals,
             ticktext: tickText,
             fixedrange: true,
-            showline: true,
-            linecolor: '#444',
-            linewidth: 1,
-            showgrid: false,
+            showgrid: false, // Сітка тільки від нижньої осі, щоб не дублювати
             zeroline: false,
             automargin: true 
         },
+        
         hovermode: 'closest',
         shapes: shapes,
-        // Висота адаптується під кількість груп
-        height: totalGroups * 50 + 100 
+        height: totalGroups * 50 + 80 // Висота підлаштовується
     };
     
-    Plotly.newPlot("chart", traces, layout, {responsive: true});
+    // config: {responsive: true} обов'язково для адаптивності
+    Plotly.newPlot("chart", traces, layout, {responsive: true, displayModeBar: false});
     
-    // Запуск таймера для пересування червоної лінії
     startClockUpdate();
 }
 
@@ -319,25 +309,19 @@ function getCurrentTotalMinutes() {
 
 function startClockUpdate() {
     if (window.clockInterval) clearInterval(window.clockInterval);
-    
     window.clockInterval = setInterval(() => {
         const current = getCurrentTotalMinutes();
-        
-        // Оновлення червоної лінії (останній shape в масиві)
         Plotly.relayout("chart", {
             'shapes[0].x0': current,
             'shapes[0].x1': current,
-            // Якщо є розділювач півночі (у Combined Mode)
-            'shapes[1].x0': 1440,
+            'shapes[1].x0': 1440, // Якщо є розділювач
             'shapes[1].x1': 1440,
-        });
-
-    }, 60000); // Оновлюємо раз на хвилину
+        }).catch(() => {}); // catch помилок якщо shapes[1] не існує
+    }, 60000);
 }
 
-// Старт
 loadPowerData();
-setInterval(() => loadPowerData(), 900000); // Автооновлення JSON кожні 15 хв
+setInterval(() => loadPowerData(), 900000); 
 
 </script>
 </body>
