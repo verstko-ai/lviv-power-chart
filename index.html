@@ -68,6 +68,35 @@
     #chart { width: 100%; flex-grow: 1; min-height: 400px; }
     .error { color: #d32f2f; font-weight: bold; padding: 20px; background: #ffebee; border-radius: 4px; }
     .info-badge { display: inline-block; background: #e1f5fe; color: #0277bd; padding: 2px 6px; border-radius: 4px; font-size: 0.7rem; margin-top: 2px;}
+
+    /* *** СТИЛІ ДЛЯ СПОВІЩЕННЯ (TOAST) *** */
+    .toast {
+        visibility: hidden;
+        min-width: 250px;
+        margin-left: -125px;
+        background-color: #333;
+        color: #fff;
+        text-align: center;
+        border-radius: 8px;
+        padding: 16px;
+        position: fixed;
+        z-index: 9999;
+        left: 50%;
+        bottom: 30px;
+        font-size: 1rem;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        opacity: 0;
+        transition: opacity 0.5s, bottom 0.5s;
+        border-left: 5px solid #32CD32; /* Зелена смужка */
+    }
+
+    .toast.show {
+        visibility: visible;
+        opacity: 1;
+        bottom: 50px; /* Ефект спливання */
+    }
+    
+    .toast-title { font-weight: bold; display: block; margin-bottom: 5px; font-size: 1.1rem;}
 </style>
 </head>
 <body>
@@ -89,6 +118,11 @@
 
 <div id="chart"></div>
 
+<div id="notificationToast" class="toast">
+    <span class="toast-title">⚡ Увага!</span>
+    Графік відключень змінився!
+</div>
+
 <script>
 // --- НАЛАШТУВАННЯ ---
 const LINE_WIDTH = 30; 
@@ -99,6 +133,8 @@ const TOP_AXIS_ANCHOR = "AXIS_ACTIVATOR";
 const DEFAULT_TEMPLATE = ["1.1", "1.2", "2.1", "2.2", "3.1", "3.2", "4.1", "4.2", "5.1", "5.2", "6.1", "6.2"];
 
 let isUpdating = false;
+// Змінна для зберігання попереднього змісту графіку (у вигляді рядка JSON)
+let previousSchedulesStr = ""; 
 
 function getGroupColor(groupName) {
     const match = groupName.match(/\d+/);
@@ -117,6 +153,33 @@ function toMinutes(t) {
 function parseDateKey(dateStr) {
     const parts = dateStr.split(".");
     return new Date(parts[2], parts[1] - 1, parts[0]);
+}
+
+// *** ФУНКЦІЯ ПОКАЗУ СПОВІЩЕННЯ ***
+function showNotification() {
+    const toast = document.getElementById("notificationToast");
+    toast.className = "toast show";
+    
+    // Відтворення звуку (короткий "біп")
+    try {
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const oscillator = audioCtx.createOscillator();
+        const gainNode = audioCtx.createGain();
+        oscillator.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+        oscillator.type = 'sine';
+        oscillator.frequency.setValueAtTime(440, audioCtx.currentTime); // 440Hz
+        gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+        oscillator.start();
+        oscillator.stop(audioCtx.currentTime + 0.2); // 0.2 секунди
+    } catch (e) {
+        // Ігноруємо помилки аудіо (наприклад, якщо користувач не взаємодіяв зі сторінкою)
+    }
+
+    // Ховаємо через 5 секунд
+    setTimeout(function(){ 
+        toast.className = toast.className.replace("show", ""); 
+    }, 5000);
 }
 
 async function manualRefresh() {
@@ -140,9 +203,25 @@ async function manualRefresh() {
 
 async function loadPowerData() {
     try {
+        // Додаємо timestamp, щоб уникнути кешування
         const response = await fetch('./power_data.json?v=' + new Date().getTime());
         if (!response.ok) throw new Error(`Status ${response.status}`);
         const json = await response.json();
+
+        // *** ЛОГІКА ПЕРЕВІРКИ ЗМІН ***
+        // Ми порівнюємо тільки об'єкт schedules. 
+        // Якщо змінився лише час оновлення (updated_at), а графік той самий - сповіщення НЕ буде.
+        const currentSchedulesStr = JSON.stringify(json.schedules);
+        
+        // Якщо це не перший запуск і дані відрізняються
+        if (previousSchedulesStr !== "" && previousSchedulesStr !== currentSchedulesStr) {
+            console.log("Detect change!");
+            showNotification();
+        }
+        
+        // Оновлюємо збережені дані
+        previousSchedulesStr = currentSchedulesStr;
+        // *******************************
 
         const updateTime = json.updated_at_site || new Date(json.scan_date).toLocaleString('uk-UA');
         const updateElem = document.getElementById("updated");
@@ -167,8 +246,6 @@ async function loadPowerData() {
         let globalXMax = 1440; 
         let globalXMin = 0;
 
-        // Масив для фігур (shapes), ініціалізуємо порожнім, наповнимо в buildChart
-        // Але якщо режим комбінований, додамо лінію півночі пізніше
         let midnightShape = null;
 
         if (isCombinedMode) {
@@ -186,13 +263,9 @@ async function loadPowerData() {
             processDayData(json.schedules[todayStr], 0, traces, finalGroups);
             processDayData(json.schedules[tomorrowStr], 1440, traces, finalGroups);
 
-            // Зберігаємо шейп півночі, щоб додати його пізніше в buildChart
             midnightShape = {
-                type: 'line',
-                x0: 1440, x1: 1440,
-                y0: -0.5, y1: 1, // y1 оновиться пізніше
-                line: { color: COLOR_MIDNIGHT, width: 3, dash: 'dot' },
-                layer: 'above' // Північ теж зверху
+                type: 'line', x0: 1440, x1: 1440, y0: -0.5, y1: 1, 
+                line: { color: COLOR_MIDNIGHT, width: 3, dash: 'dot' }, layer: 'above'
             };
 
         } else {
@@ -311,13 +384,11 @@ function buildChart(traces, groups, xMin, xMax, midnightShape, isCombined) {
     const tickVals = [];
     const tickText = [];
     
-    // Масив для всіх фігур (сітка + лінії часу)
     let shapes = [];
 
-    // --- ГЕНЕРАЦІЯ СІТКИ ТА МІТОК ---
+    // ГЕНЕРАЦІЯ СІТКИ
     for (let i = 0; i <= xMax; i += 60) {
         if (i < xMin) continue;
-        
         tickVals.push(i);
         let hour = Math.floor(i / 60);
         let displayHour = hour % 24;
@@ -328,20 +399,12 @@ function buildChart(traces, groups, xMin, xMax, midnightShape, isCombined) {
         }
         tickText.push(`${displayHour.toString().padStart(2, '0')}:00${suffix}`);
 
-        // ** НОВА ЛОГІКА СІТКИ (Кожні 3 години поверх смуг) **
-        // Перевіряємо, чи година кратна 3 (0, 3, 6, 9...)
+        // Кожні 3 години поверх смуг
         if (hour % 3 === 0) {
             shapes.push({
-                type: 'line',
-                layer: 'above', // Малюємо ПОВЕРХ смуг
-                xref: 'x', yref: 'paper', // yref: paper означає від низу до верху всього графіку
-                x0: i, x1: i,
-                y0: 0, y1: 1,
-                line: { 
-                    color: 'rgba(0, 0, 0, 0.15)', // Напівпрозорий чорний
-                    width: 1,
-                    dash: 'solid' 
-                }
+                type: 'line', layer: 'above', xref: 'x', yref: 'paper',
+                x0: i, x1: i, y0: 0, y1: 1,
+                line: { color: 'rgba(0, 0, 0, 0.15)', width: 1, dash: 'solid' }
             });
         }
     }
@@ -349,7 +412,6 @@ function buildChart(traces, groups, xMin, xMax, midnightShape, isCombined) {
     const totalGroups = groups.length;
     const lineYMax = totalGroups - 0.5;
     
-    // Додаємо лінію півночі (якщо є)
     if (midnightShape) {
         midnightShape.y1 = lineYMax;
         shapes.push(midnightShape);
@@ -357,48 +419,31 @@ function buildChart(traces, groups, xMin, xMax, midnightShape, isCombined) {
     
     const currentTime = getCurrentTotalMinutes();
     
-    // Додаємо лінію "Зараз" (вона має бути останньою, щоб бути зверху всіх)
     shapes.push({
-        type: "line",
-        xref: "x",
-        x0: currentTime, x1: currentTime,
+        type: "line", xref: "x", x0: currentTime, x1: currentTime,
         y0: -0.5, y1: lineYMax,
-        line: { color: "#d32f2f", width: 2, dash: "solid" },
-        layer: 'above'
+        line: { color: "#d32f2f", width: 2, dash: "solid" }, layer: 'above'
     });
 
     const layout = {
         margin: { t: 50, b: 40, l: 40, r: 10 },
         xaxis: {
-            title: "",
-            range: [xMin, xMax], 
-            tickvals: tickVals,
-            ticktext: tickText,
-            fixedrange: true,
-            gridcolor: '#eee', // Стандартна сітка (під смугами) для інших годин
-            showgrid: true
+            title: "", range: [xMin, xMax], tickvals: tickVals, ticktext: tickText,
+            fixedrange: true, gridcolor: '#eee', showgrid: true
         },
         yaxis: {
-            title: "",
-            type: "category",
-            categoryorder: "array",
-            categoryarray: [...groups].reverse(),
-            fixedrange: true,
-            showgrid: true,
-            zeroline: false
+            title: "", type: "category", categoryorder: "array", categoryarray: [...groups].reverse(),
+            fixedrange: true, showgrid: true, zeroline: false
         },
         xaxis2: {
             title: "", overlaying: 'x', side: 'top',     
             range: [xMin, xMax], tickvals: tickVals, ticktext: tickText,
             fixedrange: true, showgrid: false, zeroline: false, automargin: true 
         },
-        hovermode: 'closest',
-        shapes: shapes,
-        height: totalGroups * 50 + 80,
+        hovermode: 'closest', shapes: shapes, height: totalGroups * 50 + 80,
         annotations: [{
             x: currentTime, y: lineYMax, xref: 'x', yref: 'y',
-            text: formatTime(currentTime % 1440),
-            showarrow: false, yshift: 10,
+            text: formatTime(currentTime % 1440), showarrow: false, yshift: 10,
             font: { color: '#d32f2f', size: 12, weight: 'bold' },
             bgcolor: 'rgba(255,255,255,0.9)', bordercolor: '#d32f2f',
             borderwidth: 1, borderpad: 2, opacity: 1
@@ -426,16 +471,9 @@ function startClockUpdate() {
         const current = getCurrentTotalMinutes();
         const timeStr = formatTime(current % 1440);
         
-        // Знаходимо індекси shapes для оновлення.
-        // Останній елемент - це завжди "Зараз".
-        // Якщо є CombinedMode, передостанній - це Північ (midnightShape).
-        // Але простіше оновити весь графік частково або знайти індекс динамічно.
-        // В цьому коді ми просто припускаємо, що "Зараз" - це останній елемент.
-        
         const chartDiv = document.getElementById('chart');
         if (chartDiv && chartDiv.layout && chartDiv.layout.shapes) {
             const lastShapeIndex = chartDiv.layout.shapes.length - 1;
-            
             const update = {
                 [`shapes[${lastShapeIndex}].x0`]: current,
                 [`shapes[${lastShapeIndex}].x1`]: current,
