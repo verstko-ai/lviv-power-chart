@@ -42,7 +42,7 @@
 const LINE_WIDTH = 30; // Зменшено ширину лінії для мобільного вигляду
 const PALETTE = ['#FFA500', '#32CD32', '#1E90FF', '#9370DB', '#FF69B4', '#00CED1'];
 const COLOR_POWER_OFF = "#333333"; 
-const COLOR_MIDNIGHT = "#00008B";
+const COLOR_MIDNIGHT = "#00008B"; // Колір розділювача днів
 
 // *** НОВА КОНСТАНТА: Невидимий елемент для активації осі X2 ***
 const TOP_AXIS_ANCHOR = "AXIS_ACTIVATOR";
@@ -259,7 +259,7 @@ function buildChart(traces, groups, xMin, xMax, shapes, isCombined) {
         margin: { t: 40, b: 40, l: 60, r: 20 },
         
         xaxis: {
-            title: "Час",
+            title: "", // *** ВИПРАВЛЕНО: Видалення підпису осі X ***
             range: [xMin, xMax], 
             tickvals: tickVals,
             ticktext: tickText,
@@ -267,7 +267,7 @@ function buildChart(traces, groups, xMin, xMax, shapes, isCombined) {
             gridcolor: '#eee'
         },
         yaxis: {
-            title: "Групи",
+            title: "", // *** ВИПРАВЛЕНО: Видалення підпису осі Y ***
             type: "category",
             categoryorder: "array",
             categoryarray: [...groups].reverse(),
@@ -277,8 +277,9 @@ function buildChart(traces, groups, xMin, xMax, shapes, isCombined) {
         },
         // *** ДОДАЄМО ДРУГУ ВІСЬ X ЗВЕРХУ ***
         xaxis2: {
-            overlaying: 'x', // Накладаємо на основну вісь X
-            side: 'top',     // Розміщуємо зверху
+            title: "", // *** ВИПРАВЛЕНО: Видалення підпису осі X2 ***
+            overlaying: 'x', 
+            side: 'top',     
             range: [xMin, xMax],
             tickvals: tickVals,
             ticktext: tickText,
@@ -288,12 +289,10 @@ function buildChart(traces, groups, xMin, xMax, shapes, isCombined) {
             linewidth: 1,
             showgrid: false,
             zeroline: false,
-            // Додамо невеликий відступ для міток
             automargin: true 
         },
         hovermode: 'closest',
         shapes: shapes,
-        // *** АДАПТИВНА ВИСОТА ДЛЯ ГРАФІКУ ***
         height: totalGroups * 50 + 100 
     };
     
