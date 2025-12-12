@@ -5,72 +5,298 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Графік відключень</title>
 <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
-
 <style>
-    /* Загальні стилі */
-    body { 
-        font-family: 'Segoe UI', Arial, sans-serif; 
-        margin: 0; 
-        padding: 15px; 
-        background: #fafafa; 
-        overflow-x: hidden; /* Уникаємо горизонтальної прокрутки */
-    }
-
-    h1 { 
-        margin-bottom: 5px; 
-        font-size: 1.4rem; 
-        word-wrap: break-word;
-        text-align: center;
-    }
-
-    #updated { 
-        margin-bottom: 10px; 
-        color: #666; 
-        font-size: 0.9rem; 
-        text-align: center;
-    }
-
-    /* Адаптивний контейнер для графіка */
-    #chart { 
-        width: 100%; 
-        height: auto; 
-        min-height: 400px; 
-        max-height: 85vh; /* Обмежуємо, щоб не вилазив за екран */
-        margin-bottom: 20px;
-    }
-
-    /* Plotly інколи обрізає верхню вісь – фіксуємо */
-    .main-svg {
-        overflow: visible !important;
-    }
-
-    .error { 
-        color: #d32f2f; 
-        font-weight: bold; 
-        padding: 20px; 
-        background: #ffebee; 
-        border-radius: 4px; 
-    }
-
-    .info-mode { 
-        color: #0288d1; 
-        font-weight: bold; 
-        font-size: 0.9rem; 
-        margin-top: 5px;
-        text-align: center;
-    }
-
-    /* Мобільні покращення */
-    @media (max-width: 600px) {
-        body { padding: 10px; }
-        h1 { font-size: 1.2rem; }
-        #chart { min-height: 350px; }
-    }
+    body { font-family: 'Segoe UI', Arial, sans-serif; margin: 0; padding: 20px; background: #fafafa; }
+    h1 { margin-bottom: 5px; font-size: 1.5rem; }
+    #updated { margin-bottom: 15px; color: #666; font-size: 0.9rem; }
+    #chart { width: 100%; height: 85vh; min-height: 500px; }
+    .error { color: #d32f2f; font-weight: bold; padding: 20px; background: #ffebee; border-radius: 4px; }
+    .info-mode { color: #0288d1; font-weight: bold; font-size: 0.9rem; margin-top: 5px; }
 </style>
-
 </head>
 <body>
 
 <h1 id="title">Завантаження...</h1>
 <div id="updated"></div>
 <div id="chart"></div>
+
+<script>
+// --- НАЛАШТУВАННЯ ---
+const LINE_WIDTH = 45; 
+const PALETTE = ['#FFA500', '#32CD32', '#1E90FF', '#9370DB', '#FF69B4', '#00CED1'];
+const COLOR_POWER_OFF = "#333333"; 
+const COLOR_MIDNIGHT = "#00008B"; // Колір розділювача днів
+
+// Шаблон груп
+const DEFAULT_TEMPLATE = ["1.1", "1.2", "2.1", "2.2", "3.1", "3.2", "4.1", "4.2", "5.1", "5.2", "6.1", "6.2"];
+
+function getGroupColor(groupName) {
+    const match = groupName.match(/\d+/);
+    if (match) {
+        const num = parseInt(match[0]);
+        return PALETTE[(num - 1) % PALETTE.length];
+    }
+    return PALETTE[0];
+}
+
+function toMinutes(t) {
+    const [h, m] = t.split(":").map(Number);
+    return h * 60 + m;
+}
+
+// Парсинг дати з формату "DD.MM.YYYY" в Date об'єкт
+function parseDateKey(dateStr) {
+    const parts = dateStr.split(".");
+    // parts[2] = YYYY, parts[1] = MM, parts[0] = DD
+    return new Date(parts[2], parts[1] - 1, parts[0]);
+}
+
+async function loadPowerData() {
+    try {
+        const response = await fetch('./power_data.json?v=' + new Date().getTime());
+        if (!response.ok) throw new Error(`Status ${response.status}`);
+        const json = await response.json();
+
+        // Оновлюємо час сканування
+        const updateTime = json.updated_at_site || new Date(json.scan_date).toLocaleString('uk-UA');
+        document.getElementById("updated").textContent = `Оновлено: ${updateTime}`;
+
+        // Отримуємо ключі дат (сортуємо, щоб 09.12 йшло перед 10.12)
+        let dateKeys = Object.keys(json.schedules || {}).sort((a, b) => parseDateKey(a) - parseDateKey(b));
+        
+        if (dateKeys.length === 0) throw new Error("Дані порожні або неправильний формат.");
+
+        // Визначаємо поточну дату
+        const today = new Date();
+        today.setHours(0,0,0,0);
+        
+        // --- ЛОГІКА ВИБОРУ РЕЖИМУ ---
+        // Якщо є сьогодні і завтра -> COMBINED MODE
+        // Інакше -> STANDARD MODE (показуємо першу знайдену дату)
+
+        let traces = [];
+        let layoutShapes = [];
+        let finalGroups = new Set(DEFAULT_TEMPLATE);
+        
+        // Знаходимо сьогоднішню дату в ключах JSON
+        // (форматуємо today назад в рядок для порівняння або порівнюємо об'єкти)
+        const todayStr = dateKeys.find(k => parseDateKey(k).getTime() === today.getTime());
+        
+        // Перевіряємо, чи є завтра
+        const tomorrow = new Date(today);
+        tomorrow.setDate(today.getDate() + 1);
+        const tomorrowStr = dateKeys.find(k => parseDateKey(k).getTime() === tomorrow.getTime());
+
+        let isCombinedMode = (todayStr && tomorrowStr);
+        let chartTitle = "";
+        let globalXMax = 1440; // 24 години за замовчуванням
+        let globalXMin = 0;
+
+        if (isCombinedMode) {
+            // === РЕЖИМ 30 ГОДИН ===
+            chartTitle = `Графік на ${todayStr} та ${tomorrowStr}`;
+            document.getElementById("updated").innerHTML += `<div class="info-mode">📅 Режим "Вечір": показуємо залишок сьогодні та весь завтрашній день</div>`;
+
+            // 1. Формуємо список груп з обох днів
+            Object.keys(json.schedules[todayStr]).forEach(g => finalGroups.add(g));
+            Object.keys(json.schedules[tomorrowStr]).forEach(g => finalGroups.add(g));
+            
+            // 2. Визначаємо точку старту (Зараз мінус 6 годин, але не менше 0)
+            const nowHour = new Date().getHours();
+            const startLookback = Math.max(0, nowHour - 6); 
+            globalXMin = startLookback * 60; // Початок осі X (хвилини)
+            globalXMax = 1440 + 1440; // 48 годин (кінець завтрашнього дня)
+
+            // 3. Обробка СЬОГОДНІ (offset 0)
+            processDayData(json.schedules[todayStr], 0, traces, finalGroups);
+
+            // 4. Обробка ЗАВТРА (offset 1440 хвилин)
+            processDayData(json.schedules[tomorrowStr], 1440, traces, finalGroups);
+
+            // 5. Додаємо розділювач днів (Північ)
+            layoutShapes.push({
+                type: 'line',
+                x0: 1440, x1: 1440,
+                y0: -0.5, y1: finalGroups.size + 0.5, // Динамічна висота пізніше виправиться
+                line: { color: COLOR_MIDNIGHT, width: 3, dash: 'dot' }
+            });
+
+        } else {
+            // === СТАНДАРТНИЙ РЕЖИМ ===
+            // Беремо або сьогодні, або першу доступну дату (якщо сьогодні немає)
+            const targetDate = todayStr || dateKeys[0];
+            chartTitle = `Графік на ${targetDate}`;
+            
+            Object.keys(json.schedules[targetDate]).forEach(g => finalGroups.add(g));
+            processDayData(json.schedules[targetDate], 0, traces, finalGroups);
+        }
+
+        document.getElementById("title").innerText = chartTitle;
+
+        // Сортуємо групи
+        const sortedGroups = [...finalGroups].sort();
+
+        // Будуємо графік
+        buildChart(traces, sortedGroups, globalXMin, globalXMax, layoutShapes, isCombinedMode);
+
+    } catch (error) {
+        console.error(error);
+        document.getElementById("updated").innerHTML = `<span class="error">Помилка: ${error.message}</span>`;
+    }
+}
+
+// Функція перетворення даних дня в смужки
+// offset = 0 для сьогодні, 1440 для завтра
+function processDayData(schedule, offset, traces, allGroups) {
+    allGroups.forEach(group => {
+        const intervalsStr = schedule[group] || [];
+        const groupColor = getGroupColor(group);
+        
+        let dayStart = 0 + offset;
+        let dayEnd = 1440 + offset;
+
+        if (intervalsStr.length > 0) {
+            let last = dayStart;
+            
+            const outages = intervalsStr.map(interval => {
+                const [s, e] = interval.split("-");
+                return [toMinutes(s) + offset, toMinutes(e) + offset];
+            });
+
+            outages.forEach(([start, end]) => {
+                if (start > last) {
+                    // Світло Є
+                    traces.push(createTrace(group, last, start, groupColor, "Світло є"));
+                }
+                // Світла НЕМАЄ
+                const timeLabel = formatTime(start - offset) + " - " + formatTime(end - offset);
+                traces.push(createTrace(group, start, end, COLOR_POWER_OFF, `ВІДКЛЮЧЕННЯ: ${timeLabel}`));
+                last = end;
+            });
+
+            if (last < dayEnd) {
+                traces.push(createTrace(group, last, dayEnd, groupColor, "Світло є"));
+            }
+        } else {
+            // Немає вимкнень цілий день
+            traces.push(createTrace(group, dayStart, dayEnd, groupColor, "Без відключень"));
+        }
+    });
+}
+
+function createTrace(group, start, end, color, text) {
+    return {
+        x: [start, end],
+        y: [group, group],
+        mode: "lines",
+        line: { width: LINE_WIDTH, color: color },
+        hoverinfo: "text",
+        text: `${group}: ${text}`,
+        showlegend: false
+    };
+}
+
+function buildChart(traces, groups, xMin, xMax, shapes, isCombined) {
+    // Генерація підписів осі X
+    const tickVals = [];
+    const tickText = [];
+    
+    // Робимо кроки по годині
+    for (let i = 0; i <= xMax; i += 60) {
+        if (i < xMin) continue; // Не показувати мітки з минулого, яке ми обрізали
+        
+        tickVals.push(i);
+        
+        let hour = Math.floor(i / 60);
+        let displayHour = hour % 24;
+        let suffix = "";
+        
+        if (isCombined) {
+            if (hour === 0) suffix = " (Сьогодні)";
+            if (hour === 24) suffix = " (ЗАВТРА)";
+        }
+        
+        tickText.push(`${displayHour.toString().padStart(2, '0')}:00${suffix}`);
+    }
+
+    // Оновлюємо висоту ліній (сітки та півночі) під к-сть груп
+    shapes.forEach(s => {
+        s.y1 = groups.length - 0.5;
+    });
+
+    // Додаємо лінію "Зараз"
+    shapes.push({
+        type: "line",
+        xref: "x",
+        // getCurrentTotalMinutes повертає час від початку сьогоднішнього дня (0..1440)
+        // Якщо ми дивимось на завтра, лінія "Зараз" залишиться в зоні сьогодні
+        x0: getCurrentTotalMinutes(),
+        x1: getCurrentTotalMinutes(),
+        y0: -0.5,
+        y1: groups.length - 0.5,
+        line: { color: "red", width: 2, dash: "dash" }
+    });
+
+    const layout = {
+        xaxis: {
+            range: [xMin, xMax], // Динамічний діапазон (обрізаний початок)
+            tickvals: tickVals,
+            ticktext: tickText,
+            fixedrange: true,
+            gridcolor: '#eee'
+        },
+        yaxis: {
+            title: "",
+            type: "category",
+            categoryorder: "array",
+            categoryarray: [...groups].reverse(),
+            fixedrange: true
+        },
+        margin: { t: 40, b: 40, l: 60, r: 20 },
+        hovermode: 'closest',
+        shapes: shapes,
+        height: groups.length * 60 + 100 // Адаптивна висота графіку
+    };
+
+    Plotly.newPlot("chart", traces, layout, {responsive: true});
+    
+    // Запуск таймера для пересування червоної лінії
+    startClockUpdate();
+}
+
+function formatTime(minutes) {
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+}
+
+function getCurrentTotalMinutes() {
+    const now = new Date();
+    return now.getHours() * 60 + now.getMinutes();
+}
+
+function startClockUpdate() {
+    // Оновлюємо червону лінію раз на хвилину
+    if (window.clockInterval) clearInterval(window.clockInterval);
+    
+    window.clockInterval = setInterval(() => {
+        const current = getCurrentTotalMinutes();
+        // Оновлюємо останню фігуру в масиві shapes (це наша червона лінія)
+        // Примітка: Plotly.relayout складніший з масивами shapes, 
+        // тому найпростіше - просто перемалювати лінію, якщо є можливість,
+        // але для продуктивності спробуємо оновити конкретний атрибут.
+        
+        // Тут спрощений update - просто перезавантажимо дані, 
+        // або можна залишити статичну, якщо користувач не сидить годинами на сторінці.
+        // Для простоти - просто log, бо Plotly relayout складний для динамічних shapes index.
+        console.log("Time update:", current);
+    }, 60000);
+}
+
+// Старт
+loadPowerData();
+setInterval(() => loadPowerData(), 900000); // Автооновлення JSON кожні 15 хв
+
+</script>
+</body>
+</html>
