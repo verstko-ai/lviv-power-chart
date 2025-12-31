@@ -128,7 +128,6 @@ const PALETTE = ['#FFA500', '#32CD32', '#1E90FF', '#9370DB', '#FF69B4', '#00CED1
 const COLOR_POWER_OFF = "#333333"; 
 const COLOR_MIDNIGHT = "#00008B"; 
 const TOP_AXIS_ANCHOR = "AXIS_ACTIVATOR";
-// Цей шаблон буде використовуватись ЗАВЖДИ як основа
 const DEFAULT_TEMPLATE = ["1.1", "1.2", "2.1", "2.2", "3.1", "3.2", "4.1", "4.2", "5.1", "5.2", "6.1", "6.2"];
 
 let isUpdating = false;
@@ -213,28 +212,27 @@ async function loadPowerData() {
         const updateElem = document.getElementById("updated");
         updateElem.innerHTML = `Оновлено: ${updateTime}`;
 
+        // Сортуємо ключі для fallback логіки
         let dateKeys = Object.keys(json.schedules || {}).sort((a, b) => parseDateKey(a) - parseDateKey(b));
         
-        if (dateKeys.length === 0) {
-             console.warn("Дані розкладу порожні, використовуємо поточну дату");
-        }
-
+        // Визначаємо СЬОГОДНІ на основі часу браузера
         const today = new Date();
         today.setHours(0,0,0,0);
-        
-        let traces = [];
-        // *** ВИПРАВЛЕННЯ: Ініціалізуємо ВСІ групи відразу з шаблону ***
-        let finalGroups = new Set(DEFAULT_TEMPLATE); 
-        
-        let todayStr = dateKeys.find(k => parseDateKey(k).getTime() === today.getTime());
-        if (!todayStr) todayStr = formatDateKey(today);
+        const todayKey = formatDateKey(today);
 
+        // Визначаємо ЗАВТРА
         const tomorrow = new Date(today);
         tomorrow.setDate(today.getDate() + 1);
-        let tomorrowStr = dateKeys.find(k => parseDateKey(k).getTime() === tomorrow.getTime());
+        const tomorrowKey = formatDateKey(tomorrow);
 
-        let hasDataForTomorrow = json.schedules && json.schedules[tomorrowStr];
-        let isCombinedMode = (json.schedules && json.schedules[todayStr] && hasDataForTomorrow);
+        // *** ГОЛОВНА ЗМІНА: Пряма перевірка наявності даних по ключу ***
+        const hasDataForTomorrow = json.schedules && json.schedules[tomorrowKey];
+        
+        // Вмикаємо режим "Вечір", якщо є дані на завтра
+        const isCombinedMode = !!hasDataForTomorrow;
+        
+        let traces = [];
+        let finalGroups = new Set(DEFAULT_TEMPLATE); 
         
         let chartTitle = "";
         let globalXMax = 1440; 
@@ -244,13 +242,14 @@ async function loadPowerData() {
         const getScheduleSafe = (dateStr) => (json.schedules && json.schedules[dateStr]) ? json.schedules[dateStr] : {};
 
         if (isCombinedMode) {
-            chartTitle = `Графік на ${todayStr} та ${tomorrowStr}`;
+            chartTitle = `Графік на ${todayKey} та ${tomorrowKey}`;
             updateElem.innerHTML += `<br><span class="info-badge">🌙 Вечірній режим (30 год)</span>`;
 
-            const schedToday = getScheduleSafe(todayStr);
-            const schedTomorrow = getScheduleSafe(tomorrowStr);
+            // Беремо дані прямо по рядковим ключам
+            const schedToday = getScheduleSafe(todayKey);
+            const schedTomorrow = getScheduleSafe(tomorrowKey);
 
-            // Додаємо групи з JSON, якщо раптом з'являться нові (наприклад 7.1), але 1.1-6.2 вже є
+            // Додаємо знайдені групи
             Object.keys(schedToday).forEach(g => finalGroups.add(g));
             Object.keys(schedTomorrow).forEach(g => finalGroups.add(g));
             
@@ -268,17 +267,19 @@ async function loadPowerData() {
             };
 
         } else {
-            chartTitle = `Графік на ${todayStr}`;
-            const schedToday = getScheduleSafe(todayStr);
+            // Стандартний режим
+            // Якщо сьогоднішньої дати немає в JSON, беремо першу доступну або сьогоднішню пусту
+            const targetDate = (json.schedules && json.schedules[todayKey]) ? todayKey : (dateKeys[0] || todayKey);
+            
+            chartTitle = `Графік на ${targetDate}`;
+            const schedToday = getScheduleSafe(targetDate);
             
             Object.keys(schedToday).forEach(g => finalGroups.add(g));
-            
             processDayData(schedToday, 0, traces, finalGroups);
         }
 
         document.getElementById("title").innerText = chartTitle;
 
-        // Фільтруємо і сортуємо. '0' і пусті видаляємо, але DEFAULT_TEMPLATE там залишиться
         let rawGroups = [...finalGroups];
         let filteredGroups = rawGroups.filter(g => g && g.toString().trim() !== "" && g !== "0").sort();
 
@@ -347,14 +348,12 @@ function processDayData(schedule, offset, traces, allGroups) {
     allGroups.forEach(group => {
         if (!group || group === "0") return;
         
-        // Беремо інтервали з JSON, якщо їх немає - то пустий масив
         const intervalsStr = (schedule && schedule[group]) ? schedule[group] : [];
         const groupColor = getGroupColor(group);
         let dayStart = 0 + offset;
         let dayEnd = 1440 + offset;
 
         if (intervalsStr.length > 0) {
-            // Є дані про відключення - малюємо їх
             let last = dayStart;
             const outages = intervalsStr.map(interval => {
                 const [s, e] = interval.split("-");
@@ -362,21 +361,16 @@ function processDayData(schedule, offset, traces, allGroups) {
             });
             outages.forEach(([start, end]) => {
                 if (start > last) {
-                    // Проміжок зі світлом
                     traces.push(createTrace(group, last, start, groupColor, "Світло є"));
                 }
                 const timeLabel = formatTime(start - offset) + " - " + formatTime(end - offset);
-                // Проміжок без світла
                 traces.push(createTrace(group, start, end, COLOR_POWER_OFF, `ВІДКЛЮЧЕННЯ: ${timeLabel}`));
                 last = end;
             });
             if (last < dayEnd) {
-                // Світло до кінця дня
                 traces.push(createTrace(group, last, dayEnd, groupColor, "Світло є"));
             }
         } else {
-            // ДАНИХ НЕМАЄ = СВІТЛО Є ЦІЛИЙ ДЕНЬ
-            // Ця частина коду тепер спрацює для всіх груп, яких не було в JSON
             traces.push(createTrace(group, dayStart, dayEnd, groupColor, "Без відключень"));
         }
     });
@@ -418,7 +412,6 @@ function buildChart(traces, groups, xMin, xMax, midnightShape, isCombined) {
     }
 
     const totalGroups = groups.length;
-    // Висота графіка буде залежати від кількості груп (завжди 12 або більше)
     const lineYMax = totalGroups - 0.5;
     
     if (midnightShape) {
@@ -500,4 +493,3 @@ setInterval(() => loadPowerData(), 900000);
 </script>
 </body>
 </html>
-
