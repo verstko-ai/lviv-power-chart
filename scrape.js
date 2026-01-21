@@ -2,7 +2,7 @@ const puppeteer = require('puppeteer');
 const fs = require('fs');
 
 (async () => {
-  console.log('🚀 Запускаємо браузер (універсальний фільтр)...');
+  console.log('🚀 Запускаємо мультирегіональний парсер...');
   const browser = await puppeteer.launch({
     headless: "new",
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
@@ -31,7 +31,6 @@ const fs = require('fs');
         const index = match.index;
         const lookbehind = content.substring(Math.max(0, index - 50), index).toLowerCase();
         
-        // Ігноруємо технічні дати "станом на" та "оновлено"
         if (!lookbehind.includes('станом на') && !lookbehind.includes('оновлено')) {
             foundDates.push({ date: dateStr, index: index });
         }
@@ -41,24 +40,19 @@ const fs = require('fs');
     const finalSchedule = {}; 
 
     if (foundDates.length === 0) {
-        console.log('⚠️ Дат не знайдено, парсимо весь текст як "Сьогодні".');
+        console.log('⚠️ Дат не знайдено, пробуємо парсити все як "Сьогодні".');
         const today = new Date();
         const dateKey = `${String(today.getDate()).padStart(2,'0')}.${String(today.getMonth()+1).padStart(2,'0')}.${today.getFullYear()}`;
-        finalSchedule[dateKey] = parseLines(content);
+        finalSchedule[dateKey] = parseRegions(content);
     } else {
         for (let i = 0; i < foundDates.length; i++) {
             const dateObj = foundDates[i];
             const start = dateObj.index;
-            // Кінець блоку - це початок наступної дати або кінець тексту
             const end = (i + 1 < foundDates.length) ? foundDates[i+1].index : content.length;
             const block = content.substring(start, end);
             
             console.log(`✂️ Аналіз блоку для ${dateObj.date}...`);
-            const data = parseLines(block);
-            
-            if (Object.keys(data).length > 0) {
-                finalSchedule[dateObj.date] = data;
-            }
+            finalSchedule[dateObj.date] = parseRegions(block);
         }
     }
 
@@ -68,7 +62,7 @@ const fs = require('fs');
     };
     
     fs.writeFileSync('power_data.json', JSON.stringify(result, null, 2));
-    console.log('💾 power_data.json оновлено.');
+    console.log('💾 power_data.json оновлено (нова структура).');
 
   } catch (error) {
     console.error('❌ Помилка:', error);
@@ -78,66 +72,90 @@ const fs = require('fs');
   }
 })();
 
-// *** ФУНКЦІЯ ПАРСИНГУ З УНІВЕРСАЛЬНИМИ ТРИГЕРАМИ ***
-function parseLines(text) {
-    const schedule = {};
-    let currentGroup = null;
+// *** ГОЛОВНА ЛОГІКА РОЗПОДІЛУ ПО РЕГІОНАХ ***
+function parseRegions(text) {
+    // Структура: { "general": { "1.1": [...] }, "sheptytskyi": { ... } }
+    const regionsData = {
+        "general": {} // Загальний графік (Львів та область) за замовчуванням
+    };
+
+    let currentRegionKey = "general";
+    
+    // Список тригерів для перемикання регіонів
+    // [Ключове слово в тексті, Ключ в JSON, Назва для відображення]
+    const REGION_TRIGGERS = [
+        { keyword: "шептицьк", key: "sheptytskyi" },
+        // Сюди можна додати інші: { keyword: "стрий", key: "stryi" }
+    ];
 
     const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
     // Регулярки
-    // Тепер суворіше: шукаємо "Група" або просто номер, але ігноруємо "підчерга"
-    const groupRegex = /(?:^|\s)(?:Група\s*)?([1-6]\.[1-2])(?:[\.:\s]|$)/i;
+    const groupRegex = /([1-6]\.[1-2])/g; // Шукаємо всі групи в рядку (тепер global flag 'g')
     const timeRegex = /([0-2]?\d:[0-5]\d)\s*(?:до|-|–)\s*([0-2]?\d:[0-5]\d)/gi;
-
-    // *** СПИСОК СТОП-СЛІВ ***
-    // Якщо рядок містить будь-що з цього списку - ми зупиняємо парсинг цієї дати.
-    // Це відсікає будь-які "спеціальні графіки" внизу сторінки.
-    const STOP_PHRASES = [
-        "тимчасово графік",   // "Тимчасово графік для..."
-        "окремий графік",     // "Діє окремий графік..."
-        "підчерги",           // Специфічні черги для районів
-        "підчерга",
-        "за посиланням",      // "Графік за посиланням..."
-        "важливо:"            // Часто починає блок попереджень
-    ];
 
     for (let line of lines) {
         const lowerLine = line.toLowerCase();
 
-        // 1. Перевірка на стоп-слова (УНІВЕРСАЛЬНИЙ ЗАХИСТ)
-        if (STOP_PHRASES.some(phrase => lowerLine.includes(phrase))) {
-            console.log(`   🛑 Зупинено на фразі: "${line.substring(0, 30)}..." (початок спец-блоку)`);
-            break; // Виходимо з циклу читання рядків для цієї дати
-        }
-
-        // 2. А. Шукаємо групу
-        // Додатковий захист: переконуємося, що це не "підчерга", хоча 'break' вище мав би це зловити
-        if (!lowerLine.includes('підчерг')) {
-            const gMatch = groupRegex.exec(line);
-            if (gMatch) {
-                currentGroup = gMatch[1];
-                if (!schedule[currentGroup]) schedule[currentGroup] = [];
-            }
-        }
-
-        // 3. Б. Шукаємо час (тільки якщо знаємо групу)
-        if (currentGroup) {
-            let tMatch;
-            timeRegex.lastIndex = 0;
-            while ((tMatch = timeRegex.exec(line)) !== null) {
-                const timeStr = `${tMatch[1]}-${tMatch[2]}`;
-                if (!schedule[currentGroup].includes(timeStr)) {
-                    schedule[currentGroup].push(timeStr);
+        // 1. ПЕРЕВІРКА: ЧИ ЗМІНИВСЯ РЕГІОН?
+        // Шукаємо маркери початку спец-графіків
+        if (lowerLine.includes("тимчасово графік") || lowerLine.includes("окремий графік") || lowerLine.includes("підчерг")) {
+            // Перевіряємо, який саме це регіон
+            const trigger = REGION_TRIGGERS.find(t => lowerLine.includes(t.keyword));
+            if (trigger) {
+                currentRegionKey = trigger.key;
+                if (!regionsData[currentRegionKey]) {
+                    regionsData[currentRegionKey] = {}; // Ініціалізуємо об'єкт для нового регіону
                 }
+                console.log(`   👉 Перемикання на регіон: ${currentRegionKey}`);
             }
         }
         
-        // 4. В. Скидання групи на технічних рядках
-        if (lowerLine.includes('гаряча лінія') || line.includes('0-800')) {
-            currentGroup = null;
+        // 2. ЯКЩО ЦЕ "ЗАГАЛЬНИЙ" ГРАФІК, АЛЕ МИ БАЧИМО "ПІДЧЕРГИ" (без назви міста)
+        // Це захист. Якщо в тексті пішли "підчерги", але назву міста не знайшли, 
+        // краще писати в окрему купу "unknown", ніж псувати "general".
+        // Але поки що залишимо як є, бо зазвичай назва міста йде перед словом "підчерга".
+
+        // 3. ПАРСИНГ ГРУП І ЧАСУ
+        // Шукаємо всі групи в цьому рядку (наприклад "1.1, 1.2")
+        const foundGroupsInLine = [];
+        let gMatch;
+        while ((gMatch = groupRegex.exec(line)) !== null) {
+            foundGroupsInLine.push(gMatch[1]);
+        }
+
+        if (foundGroupsInLine.length > 0) {
+            // Шукаємо час у цьому ж рядку
+            const times = [];
+            timeRegex.lastIndex = 0;
+            let tMatch;
+            while ((tMatch = timeRegex.exec(line)) !== null) {
+                times.push(`${tMatch[1]}-${tMatch[2]}`);
+            }
+
+            // Якщо час знайшли - записуємо його для ВСІХ груп, знайдених у рядку
+            if (times.length > 0) {
+                foundGroupsInLine.forEach(grp => {
+                    if (!regionsData[currentRegionKey][grp]) {
+                        regionsData[currentRegionKey][grp] = [];
+                    }
+                    // Додаємо час без дублікатів
+                    times.forEach(t => {
+                        if (!regionsData[currentRegionKey][grp].includes(t)) {
+                            regionsData[currentRegionKey][grp].push(t);
+                        }
+                    });
+                });
+            }
         }
     }
 
-    return schedule;
+    // Видаляємо пусті регіони, якщо такі створилися помилково
+    Object.keys(regionsData).forEach(key => {
+        if (Object.keys(regionsData[key]).length === 0 && key !== "general") {
+            delete regionsData[key];
+        }
+    });
+
+    return regionsData;
 }
