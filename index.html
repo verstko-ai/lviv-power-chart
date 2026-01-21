@@ -34,7 +34,7 @@
     h1 { margin: 0; font-size: 1.2rem; color: #333; }
     #updated { color: #666; font-size: 0.75rem; margin-top: 2px; }
 
-    .controls-wrapper { display: flex; gap: 8px; align-items: center; }
+    .controls-wrapper { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
     /* Стилі для селектів */
     .selector {
@@ -46,7 +46,6 @@
         color: #333;
         cursor: pointer;
         outline: none;
-        max-width: 150px;
     }
 
     .refresh-btn {
@@ -134,19 +133,20 @@ const PALETTE = ['#FFA500', '#32CD32', '#1E90FF', '#9370DB', '#FF69B4', '#00CED1
 const COLOR_POWER_OFF = "#333333"; 
 const COLOR_MIDNIGHT = "#00008B"; 
 const TOP_AXIS_ANCHOR = "AXIS_ACTIVATOR";
+// Шаблон груп за замовчуванням (якщо даних немає, малюємо ці)
 const DEFAULT_TEMPLATE = ["1.1", "1.2", "2.1", "2.2", "3.1", "3.2", "4.1", "4.2", "5.1", "5.2", "6.1", "6.2"];
 
-// Словник назв регіонів
+// Красиві назви для відомих регіонів
 const REGION_NAMES = {
     "general": "Львів та область",
     "sheptytskyi": "Шептицький р-н",
-    "stryi": "Стрийський р-н" // На майбутнє
+    "stryi": "Стрийський р-н"
 };
 
 let isUpdating = false;
 let previousSchedulesStr = ""; 
-let currentJsonData = null; // Зберігаємо завантажені дані глобально
-let selectedRegion = localStorage.getItem('selectedRegion') || "general"; // Зберігаємо вибір
+let currentJsonData = null; 
+let selectedRegion = localStorage.getItem('selectedRegion') || "general"; 
 
 function getGroupColor(groupName) {
     const match = groupName.match(/\d+/);
@@ -192,12 +192,12 @@ function showNotification() {
     setTimeout(function(){ toast.className = toast.className.replace("show", ""); }, 5000);
 }
 
-// Функція зміни регіону
 function changeRegion(regionKey) {
+    console.log("Change region to:", regionKey);
     selectedRegion = regionKey;
     localStorage.setItem('selectedRegion', regionKey);
     if (currentJsonData) {
-        renderChart(currentJsonData); // Перемальовуємо графік
+        renderChart(currentJsonData);
     }
 }
 
@@ -224,7 +224,7 @@ async function loadPowerData() {
         const response = await fetch('./power_data.json?v=' + new Date().getTime());
         if (!response.ok) throw new Error(`Status ${response.status}`);
         const json = await response.json();
-        currentJsonData = json; // Зберігаємо для перевикористання
+        currentJsonData = json; 
 
         const currentSchedulesStr = JSON.stringify(json.schedules);
         if (previousSchedulesStr !== "" && previousSchedulesStr !== currentSchedulesStr) {
@@ -244,13 +244,30 @@ async function loadPowerData() {
     }
 }
 
-// Головна функція малювання (тепер приймає json і малює на основі selectedRegion)
+// Функція безпечного отримання даних конкретного регіону
+// Повертає об'єкт груп { "1.1": [...], "1.2": [...] } або пустий об'єкт
+function getRegionData(json, dateStr, regionKey) {
+    if (json.schedules && json.schedules[dateStr]) {
+        // Перевіряємо, чи є такий регіон у цій даті
+        if (json.schedules[dateStr][regionKey]) {
+            return json.schedules[dateStr][regionKey];
+        }
+    }
+    return {};
+}
+
 function renderChart(json) {
     let dateKeys = Object.keys(json.schedules || {}).sort((a, b) => parseDateKey(a) - parseDateKey(b));
     
-    if (dateKeys.length === 0) {
-         console.warn("Дані розкладу порожні");
-    }
+    // --- 1. ОНОВЛЕННЯ СПИСКУ РЕГІОНІВ ---
+    // Скануємо всі дати, щоб знайти всі можливі регіони
+    const availableRegions = new Set(["general"]); 
+    dateKeys.forEach(date => {
+        const regionsInDate = Object.keys(json.schedules[date]);
+        regionsInDate.forEach(r => availableRegions.add(r));
+    });
+    updateRegionSelector([...availableRegions]);
+    // ------------------------------------
 
     const today = new Date();
     today.setHours(0,0,0,0);
@@ -260,47 +277,34 @@ function renderChart(json) {
     tomorrow.setDate(today.getDate() + 1);
     const tomorrowKey = formatDateKey(tomorrow);
 
-    // --- ОНОВЛЕННЯ СПИСКУ РЕГІОНІВ ---
-    // Збираємо всі унікальні регіони, які зустрічаються в JSON (сьогодні або завтра)
-    const availableRegions = new Set(["general"]); // Завжди є general
-    [todayKey, tomorrowKey].forEach(k => {
-        if (json.schedules[k]) {
-            Object.keys(json.schedules[k]).forEach(r => availableRegions.add(r));
-        }
-    });
-    updateRegionSelector([...availableRegions]);
-    // --------------------------------
+    // --- 2. ОТРИМАННЯ ДАНИХ (ГРУП) ДЛЯ ОБРАНОГО РЕГІОНУ ---
+    // Важливо: ми тепер працюємо тільки з даними всередині selectedRegion
+    const schedToday = getRegionData(json, todayKey, selectedRegion);
+    const schedTomorrow = getRegionData(json, tomorrowKey, selectedRegion);
 
-    // Отримуємо дані ТІЛЬКИ для обраного регіону
-    const getRegionDataSafe = (dateStr) => {
-        if (json.schedules && json.schedules[dateStr] && json.schedules[dateStr][selectedRegion]) {
-            return json.schedules[dateStr][selectedRegion];
-        }
-        return {}; // Якщо даних для регіону немає, повертаємо пусто
-    };
-
-    // Перевірка на "Вечірній режим" (Сьогодні + Завтра)
-    // Вмикаємо, якщо для ОБРАНОГО регіону є дані на завтра
-    const hasDataForTomorrow = Object.keys(getRegionDataSafe(tomorrowKey)).length > 0;
+    // Перевірка на "Вечірній режим": вмикаємо, якщо є дані на завтра для ЦЬОГО регіону
+    const hasDataForTomorrow = Object.keys(schedTomorrow).length > 0;
     const isCombinedMode = hasDataForTomorrow;
     
     let traces = [];
-    let finalGroups = new Set(DEFAULT_TEMPLATE); 
+    // Починаємо з порожнього набору, бо для різних регіонів групи можуть бути різними
+    let finalGroups = new Set(); 
     
+    // Якщо даних немає взагалі (ні сьогодні, ні завтра) - беремо шаблон, щоб не показувати пустий екран
+    if (Object.keys(schedToday).length === 0 && Object.keys(schedTomorrow).length === 0) {
+        DEFAULT_TEMPLATE.forEach(g => finalGroups.add(g));
+    }
+
     let chartTitle = "";
     let globalXMax = 1440; 
     let globalXMin = 0;
     let midnightShape = null;
 
-    if (isCombinedMode) {
-        chartTitle = `Графік на ${todayKey} та ${tomorrowKey}`;
-        const regionName = REGION_NAMES[selectedRegion] || selectedRegion;
-        chartTitle += ` (${regionName})`; // Додаємо назву регіону в заголовок
-        
-        document.getElementById("updated").innerHTML += `<br><span class="info-badge">🌙 Вечірній режим (30 год)</span>`;
+    const regionDisplayName = REGION_NAMES[selectedRegion] || selectedRegion.charAt(0).toUpperCase() + selectedRegion.slice(1);
 
-        const schedToday = getRegionDataSafe(todayKey);
-        const schedTomorrow = getRegionDataSafe(tomorrowKey);
+    if (isCombinedMode) {
+        chartTitle = `Графік на ${todayKey} та ${tomorrowKey} (${regionDisplayName})`;
+        document.getElementById("updated").innerHTML += `<br><span class="info-badge">🌙 Вечірній режим (30 год)</span>`;
 
         Object.keys(schedToday).forEach(g => finalGroups.add(g));
         Object.keys(schedTomorrow).forEach(g => finalGroups.add(g));
@@ -319,20 +323,29 @@ function renderChart(json) {
         };
 
     } else {
-        const targetDate = (json.schedules && json.schedules[todayKey]) ? todayKey : (dateKeys[0] || todayKey);
+        // Якщо даних на сьогодні немає, але ми вибрали цей регіон - показуємо "Сьогодні" з пустим графіком
+        // Або якщо є інша дата в JSON, беремо її (fallback)
+        let targetDate = todayKey;
+        if (!json.schedules[todayKey] && dateKeys.length > 0) {
+             targetDate = dateKeys[0];
+        }
+
+        chartTitle = `Графік на ${targetDate} (${regionDisplayName})`;
         
-        const regionName = REGION_NAMES[selectedRegion] || selectedRegion;
-        chartTitle = `Графік на ${targetDate} (${regionName})`;
+        // Отримуємо дані ще раз для targetDate (якщо це не today)
+        const schedTarget = getRegionData(json, targetDate, selectedRegion);
         
-        const schedToday = getRegionDataSafe(targetDate);
-        
-        Object.keys(schedToday).forEach(g => finalGroups.add(g));
-        processDayData(schedToday, 0, traces, finalGroups);
+        Object.keys(schedTarget).forEach(g => finalGroups.add(g));
+        // Якщо груп немає, додаємо дефолтні
+        if (finalGroups.size === 0) DEFAULT_TEMPLATE.forEach(g => finalGroups.add(g));
+
+        processDayData(schedTarget, 0, traces, finalGroups);
     }
 
     document.getElementById("title").innerText = chartTitle;
 
     let rawGroups = [...finalGroups];
+    // Фільтруємо сміття (на всяк випадок)
     let filteredGroups = rawGroups.filter(g => g && g.toString().trim() !== "" && g !== "0").sort();
 
     updateGroupSelector(filteredGroups);
@@ -343,7 +356,7 @@ function renderChart(json) {
 
     buildChart(traces, filteredGroups, globalXMin, globalXMax, midnightShape, isCombinedMode);
 
-    // Відновлення вибраної групи
+    // Відновлення вибраної групи (збереження стану дропдауна груп)
     const savedGroup = localStorage.getItem('selectedGroup');
     if (savedGroup) {
         const select = document.getElementById('groupSelect');
@@ -356,31 +369,24 @@ function renderChart(json) {
 
 function updateRegionSelector(regions) {
     const select = document.getElementById('regionSelect');
-    
-    // Зберігаємо поточний вибір, якщо він все ще доступний
+    // Зберігаємо поточний вибір, щоб не скидався при авто-оновленні
     const currentSelection = selectedRegion;
     
-    select.innerHTML = ''; // Очищаємо
-    
+    select.innerHTML = ''; 
     regions.forEach(r => {
         const option = document.createElement('option');
         option.value = r;
-        // Використовуємо красиву назву зі словника або просто ключ
         option.text = REGION_NAMES[r] || r.charAt(0).toUpperCase() + r.slice(1);
         select.appendChild(option);
     });
 
-    // Якщо раніше обраний регіон є в списку - вибираємо його
     if (regions.includes(currentSelection)) {
         select.value = currentSelection;
     } else {
-        // Якщо немає (наприклад, зник з даних), скидаємо на general
         select.value = "general";
         selectedRegion = "general";
-        localStorage.setItem('selectedRegion', "general");
     }
 }
-
 
 function updateGroupSelector(groups) {
     const select = document.getElementById('groupSelect');
@@ -421,6 +427,9 @@ function createAxisActivatorTrace(xMin, xMax, targetGroup) {
 }
 
 function processDayData(schedule, offset, traces, allGroups) {
+    // schedule - це об'єкт типу { "1.1": ["10:00-12:00"], ... }
+    // allGroups - це Set всіх груп, які мають бути на графіку
+    
     allGroups.forEach(group => {
         if (!group || group === "0") return;
         
@@ -431,7 +440,7 @@ function processDayData(schedule, offset, traces, allGroups) {
 
         if (intervalsStr.length > 0) {
             let last = dayStart;
-            // Сортуємо інтервали, щоб уникнути помилок малювання
+            // Сортування інтервалів
             const outages = intervalsStr
                 .map(interval => {
                     const [s, e] = interval.split("-");
