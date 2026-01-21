@@ -2,7 +2,7 @@ const puppeteer = require('puppeteer');
 const fs = require('fs');
 
 (async () => {
-  console.log('🚀 Запускаємо браузер (режим очистки)...');
+  console.log('🚀 Запускаємо браузер (універсальний фільтр)...');
   const browser = await puppeteer.launch({
     headless: "new",
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
@@ -19,7 +19,6 @@ const fs = require('fs');
     console.log('⏳ Чекаємо 5 секунд...');
     await new Promise(r => setTimeout(r, 5000));
 
-    // Беремо innerText, він найкраще зберігає візуальну структуру (рядки)
     const content = await page.evaluate(() => document.body.innerText);
     
     // --- ЕТАП 1: ПОШУК ДАТ ---
@@ -30,8 +29,9 @@ const fs = require('fs');
     while ((match = dateRegex.exec(content)) !== null) {
         const dateStr = match[1];
         const index = match.index;
-        // Перевірка на "станом на" (ігноруємо технічні дати)
         const lookbehind = content.substring(Math.max(0, index - 50), index).toLowerCase();
+        
+        // Ігноруємо технічні дати "станом на" та "оновлено"
         if (!lookbehind.includes('станом на') && !lookbehind.includes('оновлено')) {
             foundDates.push({ date: dateStr, index: index });
         }
@@ -42,22 +42,20 @@ const fs = require('fs');
 
     if (foundDates.length === 0) {
         console.log('⚠️ Дат не знайдено, парсимо весь текст як "Сьогодні".');
-        // Якщо дат немає, генеруємо поточну дату
         const today = new Date();
         const dateKey = `${String(today.getDate()).padStart(2,'0')}.${String(today.getMonth()+1).padStart(2,'0')}.${today.getFullYear()}`;
         finalSchedule[dateKey] = parseLines(content);
     } else {
         for (let i = 0; i < foundDates.length; i++) {
             const dateObj = foundDates[i];
-            // Визначаємо межі тексту для цієї дати
             const start = dateObj.index;
+            // Кінець блоку - це початок наступної дати або кінець тексту
             const end = (i + 1 < foundDates.length) ? foundDates[i+1].index : content.length;
             const block = content.substring(start, end);
             
             console.log(`✂️ Аналіз блоку для ${dateObj.date}...`);
             const data = parseLines(block);
             
-            // Записуємо тільки якщо знайшли хоча б одну групу
             if (Object.keys(data).length > 0) {
                 finalSchedule[dateObj.date] = data;
             }
@@ -70,7 +68,7 @@ const fs = require('fs');
     };
     
     fs.writeFileSync('power_data.json', JSON.stringify(result, null, 2));
-    console.log('💾 power_data.json оновлено (чисті дані).');
+    console.log('💾 power_data.json оновлено.');
 
   } catch (error) {
     console.error('❌ Помилка:', error);
@@ -80,49 +78,63 @@ const fs = require('fs');
   }
 })();
 
-// *** НОВА ФУНКЦІЯ: ПАРСИНГ ПО РЯДКАХ ***
+// *** ФУНКЦІЯ ПАРСИНГУ З УНІВЕРСАЛЬНИМИ ТРИГЕРАМИ ***
 function parseLines(text) {
     const schedule = {};
     let currentGroup = null;
 
-    // 1. Розбиваємо текст на рядки
     const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
-    // Регулярка для пошуку групи. 
-    // Шукаємо "Група 1.1" або просто "1.1." на початку рядка
+    // Регулярки
+    // Тепер суворіше: шукаємо "Група" або просто номер, але ігноруємо "підчерга"
     const groupRegex = /(?:^|\s)(?:Група\s*)?([1-6]\.[1-2])(?:[\.:\s]|$)/i;
-    
-    // Регулярка для часу (XX:XX - XX:XX)
     const timeRegex = /([0-2]?\d:[0-5]\d)\s*(?:до|-|–)\s*([0-2]?\d:[0-5]\d)/gi;
 
+    // *** СПИСОК СТОП-СЛІВ ***
+    // Якщо рядок містить будь-що з цього списку - ми зупиняємо парсинг цієї дати.
+    // Це відсікає будь-які "спеціальні графіки" внизу сторінки.
+    const STOP_PHRASES = [
+        "тимчасово графік",   // "Тимчасово графік для..."
+        "окремий графік",     // "Діє окремий графік..."
+        "підчерги",           // Специфічні черги для районів
+        "підчерга",
+        "за посиланням",      // "Графік за посиланням..."
+        "важливо:"            // Часто починає блок попереджень
+    ];
+
     for (let line of lines) {
-        // А. Чи є в цьому рядку назва групи?
-        const gMatch = groupRegex.exec(line);
-        if (gMatch) {
-            currentGroup = gMatch[1]; // Запам'ятовуємо: "Ми зараз читаємо про 1.1"
-            if (!schedule[currentGroup]) schedule[currentGroup] = [];
-            // Важливо: ми не робимо 'continue', бо в цьому ж рядку може бути і час
+        const lowerLine = line.toLowerCase();
+
+        // 1. Перевірка на стоп-слова (УНІВЕРСАЛЬНИЙ ЗАХИСТ)
+        if (STOP_PHRASES.some(phrase => lowerLine.includes(phrase))) {
+            console.log(`   🛑 Зупинено на фразі: "${line.substring(0, 30)}..." (початок спец-блоку)`);
+            break; // Виходимо з циклу читання рядків для цієї дати
         }
 
-        // Б. Чи є в цьому рядку час?
-        // Але шукаємо час ТІЛЬКИ якщо ми вже знаємо, яка це група
+        // 2. А. Шукаємо групу
+        // Додатковий захист: переконуємося, що це не "підчерга", хоча 'break' вище мав би це зловити
+        if (!lowerLine.includes('підчерг')) {
+            const gMatch = groupRegex.exec(line);
+            if (gMatch) {
+                currentGroup = gMatch[1];
+                if (!schedule[currentGroup]) schedule[currentGroup] = [];
+            }
+        }
+
+        // 3. Б. Шукаємо час (тільки якщо знаємо групу)
         if (currentGroup) {
             let tMatch;
-            // Скидаємо індекс пошуку для регулярки (важливо для global regex у циклі)
             timeRegex.lastIndex = 0;
-            
             while ((tMatch = timeRegex.exec(line)) !== null) {
                 const timeStr = `${tMatch[1]}-${tMatch[2]}`;
-                // Уникаємо дублікатів
                 if (!schedule[currentGroup].includes(timeStr)) {
                     schedule[currentGroup].push(timeStr);
                 }
             }
         }
         
-        // В. Захист від "протікання" (Footer detection)
-        // Якщо рядок схожий на "Гаряча лінія" або телефон, скидаємо групу, щоб не записати туди зайві цифри
-        if (line.toLowerCase().includes('гаряча лінія') || line.includes('0-800')) {
+        // 4. В. Скидання групи на технічних рядках
+        if (lowerLine.includes('гаряча лінія') || line.includes('0-800')) {
             currentGroup = null;
         }
     }
