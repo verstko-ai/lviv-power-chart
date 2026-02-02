@@ -2,8 +2,8 @@ name: Update Power Schedule
 
 on:
   schedule:
-    - cron: '*/15 * * * *'
-  workflow_dispatch:
+    - cron: '*/15 * * * *' # Запуск кожні 15 хв
+  workflow_dispatch:      # Ручний запуск
 
 permissions:
   contents: write
@@ -20,19 +20,34 @@ jobs:
         with:
           node-version: '18'
 
+      # КРОК 1: Встановлення системних залежностей для Chrome
+      # Без цього Puppeteer часто "висить"
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgbm-dev libasound2
+
+      # КРОК 2: Встановлення бібліотек проекту
       - name: Install libraries
         run: npm install
 
+      # КРОК 3: Запуск скрипта з обмеженням часу (5 хвилин)
       - name: Run Scraper
         run: node scrape.js
+        timeout-minutes: 5
+        env:
+          PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: 'false'
 
+      # КРОК 4: Збереження результату
       - name: Save Result
         run: |
           git config --global user.name 'GitHub Action'
           git config --global user.email 'action@github.com'
           git add power_data.json || echo "No new file found"
+          # Перевіряємо, чи є зміни, перед комітом
           git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update schedule" && git push)
 
+      # КРОК 5: Завантаження скріншотів (якщо скрипт впав або зробив скрін)
       - name: Upload Screenshot (Debug)
         if: always()
         uses: actions/upload-artifact@v4
