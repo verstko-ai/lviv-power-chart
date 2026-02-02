@@ -1,42 +1,52 @@
 const puppeteer = require('puppeteer');
 const fs = require('fs');
 
-// --- ЗАПОБІЖНИК ВІД ЗАВИСАННЯ (2 хвилини) ---
-// Якщо скрипт зависне, цей таймер приб'є процес, щоб не витрачати ліміти GitHub (15 хв)
-setTimeout(() => {
-    console.error('⏰ TIMEOUT: Скрипт працював занадто довго (більше 120с). Примусове завершення.');
+// Жорсткий таймер на рівні процесу (спробуємо ще раз)
+const watchdog = setTimeout(() => {
+    console.error('💀 WATCHDOG: Примусове завершення через зависання!');
     process.exit(1);
-}, 120000);
+}, 180000); // 3 хвилини
 
 (async () => {
-  console.log('🚀 Запускаємо мультирегіональний парсер...');
+  console.log('🚀 Запуск скрипта...');
   let browser = null;
 
   try {
+    console.log('🔧 Налаштування Puppeteer...');
+    
+    // МАКСИМАЛЬНИЙ НАБІР АРГУМЕНТІВ ДЛЯ CI/CD
     browser = await puppeteer.launch({
-      headless: "new", // Використовуємо новий режим headless
+      headless: "new", // Використовуємо новий headless режим
       args: [
-        '--no-sandbox', 
-        '--disable-setuid-sandbox', 
-        '--disable-dev-shm-usage', // Важливо для Docker/CI
-        '--disable-gpu'
-      ]
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage', // Вирішує проблеми з пам'яттю в Docker/CI
+        '--disable-gpu',           // Обов'язково для Linux серверів без відеокарти
+        '--no-first-run',
+        '--no-zygote',
+        '--single-process',        // Іноді допомагає уникнути зависання
+        '--disable-extensions'
+      ],
+      timeout: 60000 // Таймаут на запуск самого браузера (1 хв)
     });
     
     const page = await browser.newPage();
-    // Встановлюємо жорсткий таймаут на навігацію (60 секунд)
-    page.setDefaultNavigationTimeout(60000); 
+    // Таймаут на завантаження сторінки
+    page.setDefaultNavigationTimeout(60000);
 
-    console.log('🌍 Переходимо на сайт...');
-    // waitUntil: 'networkidle2' означає чекати, поки мережева активність майже вщухне
-    await page.goto('https://poweron.loe.lviv.ua/', { waitUntil: 'networkidle2' });
+    console.log('🌍 Перехід на сайт...');
+    await page.goto('https://poweron.loe.lviv.ua/', { 
+        waitUntil: 'domcontentloaded' // Чекаємо тільки HTML, не чекаємо картинки/стилі
+    });
     
-    console.log('⏳ Чекаємо 3 секунди для певності...');
-    await new Promise(r => setTimeout(r, 3000));
-
+    console.log('👀 Читання контенту...');
+    // Чекаємо селектор body, щоб точно знати, що сторінка є
+    await page.waitForSelector('body', { timeout: 10000 });
+    
     const content = await page.evaluate(() => document.body.innerText);
     
-    // --- ПОШУК ДАТ ---
+    // --- ДАЛІ ВАША ЛОГІКА ПАРСИНГУ ---
+    
     const dateRegex = /([0-3]\d\.[0-1]\d\.[0-9]{4})/g;
     let match;
     const foundDates = [];
@@ -77,25 +87,24 @@ setTimeout(() => {
     };
     
     fs.writeFileSync('power_data.json', JSON.stringify(result, null, 2));
-    console.log('💾 power_data.json успішно збережено.');
+    console.log('💾 power_data.json збережено.');
 
   } catch (error) {
-    console.error('❌ Критична помилка:', error);
-    process.exit(1); // Завершуємо з помилкою, щоб GitHub Action став червоним (але швидко)
+    console.error('❌ ПОМИЛКА:', error);
+    process.exit(1);
   } finally {
     if (browser) {
-        console.log('🔒 Закриваємо браузер...');
-        await browser.close();
+        console.log('🔒 Закриття браузера...');
+        await browser.close().catch(e => console.error('Помилка закриття:', e));
     }
-    console.log('🏁 Робота завершена.');
-    process.exit(0); // Явно завершуємо процес успішно
+    clearTimeout(watchdog); // Вимикаємо аварійний таймер
+    console.log('🏁 Кінець.');
+    process.exit(0);
   }
 })();
 
 function parseRegions(text) {
-    const regionsData = {
-        "general": {}
-    };
+    const regionsData = { "general": {} };
     let currentRegionKey = "general";
     
     const REGION_TRIGGERS = [
@@ -109,18 +118,15 @@ function parseRegions(text) {
 
     for (let line of lines) {
         const lowerLine = line.toLowerCase();
-
-        // Тригер зміни регіону
+        
         if (lowerLine.includes("тимчасово графік") || lowerLine.includes("окремий графік") || lowerLine.includes("підчерг")) {
             const trigger = REGION_TRIGGERS.find(t => lowerLine.includes(t.keyword));
             if (trigger) {
                 currentRegionKey = trigger.key;
                 if (!regionsData[currentRegionKey]) regionsData[currentRegionKey] = {};
-                console.log(`   👉 Регіон: ${currentRegionKey}`);
             }
         }
 
-        // Пошук груп
         const foundGroupsInLine = [];
         let gMatch;
         while ((gMatch = groupRegex.exec(line)) !== null) {
@@ -128,7 +134,6 @@ function parseRegions(text) {
         }
 
         if (foundGroupsInLine.length > 0) {
-            // Пошук часу
             const times = [];
             timeRegex.lastIndex = 0;
             let tMatch;
@@ -150,8 +155,7 @@ function parseRegions(text) {
             }
         }
     }
-
-    // Чистка пустих регіонів
+    
     Object.keys(regionsData).forEach(key => {
         if (Object.keys(regionsData[key]).length === 0 && key !== "general") {
             delete regionsData[key];
