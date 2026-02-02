@@ -1,12 +1,12 @@
 {
   "name": "lviv-power-chart",
   "version": "1.0.0",
-  "description": "Scraper for power outages",
+  "description": "Scraper",
   "main": "scrape.js",
   "scripts": {
     "start": "node scrape.js"
   },
   "dependencies": {
-    "puppeteer": "^21.0.0"
+    "puppeteer-core": "^21.0.0"
   }
 }
