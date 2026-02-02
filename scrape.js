@@ -1,40 +1,49 @@
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-core');
 const fs = require('fs');
+const { execSync } = require('child_process');
 
-// Запобіжник: якщо скрипт висить довше 3 хв, він сам себе вимкне
-const watchdog = setTimeout(() => {
-    console.error('💀 WATCHDOG: Примусове завершення через зависання!');
-    process.exit(1);
-}, 180000);
+// Знаходимо шлях до Chrome, який встановив GitHub Action
+const getExecutablePath = () => {
+    try {
+        // У GitHub Actions це зазвичай тут
+        if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+            return process.env.PUPPETEER_EXECUTABLE_PATH;
+        }
+        // Fallback (запасний варіант)
+        return execSync('which google-chrome').toString().trim();
+    } catch (e) {
+        return '/usr/bin/google-chrome';
+    }
+};
 
 (async () => {
-  console.log('🚀 Запуск скрипта...');
+  console.log('🚀 Старт (Puppeteer Core)...');
   let browser = null;
 
   try {
-    // Максимально легкі налаштування для сервера
+    const execPath = getExecutablePath();
+    console.log(`🔧 Chrome path: ${execPath}`);
+
     browser = await puppeteer.launch({
+      executablePath: execPath, // Використовуємо системний Chrome
       headless: "new",
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--no-first-run',
-        '--no-zygote',
-        '--single-process'
+        '--disable-gpu'
       ],
-      timeout: 60000
+      timeout: 30000
     });
     
     const page = await browser.newPage();
     page.setDefaultNavigationTimeout(60000);
 
-    console.log('🌍 Перехід на сайт...');
+    console.log('🌍 На сайт...');
     await page.goto('https://poweron.loe.lviv.ua/', { waitUntil: 'domcontentloaded' });
     
-    // Чекаємо трохи, щоб контент точно підтягнувся
-    await new Promise(r => setTimeout(r, 3000));
+    // Чекаємо рендерингу
+    await new Promise(r => setTimeout(r, 4000));
     
     const content = await page.evaluate(() => document.body.innerText);
     
@@ -53,11 +62,10 @@ const watchdog = setTimeout(() => {
         }
     }
 
-    console.log(`📅 Знайдено дат: ${foundDates.length}`);
+    console.log(`📅 Дат: ${foundDates.length}`);
     const finalSchedule = {}; 
 
     if (foundDates.length === 0) {
-        console.log('⚠️ Дат не знайдено. Парсимо як "Сьогодні".');
         const today = new Date();
         const dateKey = `${String(today.getDate()).padStart(2,'0')}.${String(today.getMonth()+1).padStart(2,'0')}.${today.getFullYear()}`;
         finalSchedule[dateKey] = parseRegions(content);
@@ -77,14 +85,13 @@ const watchdog = setTimeout(() => {
     };
     
     fs.writeFileSync('power_data.json', JSON.stringify(result, null, 2));
-    console.log('💾 Дані збережено.');
+    console.log('💾 Збережено.');
 
   } catch (error) {
-    console.error('❌ ПОМИЛКА:', error);
+    console.error('❌ Помилка:', error);
     process.exit(1);
   } finally {
     if (browser) await browser.close();
-    clearTimeout(watchdog);
     process.exit(0);
   }
 })();
