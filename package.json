@@ -1,7 +1,7 @@
 {
-  "name": "lviv-power-scraper",
+  "name": "lviv-power-chart",
   "version": "1.0.0",
-  "description": "Автоматичний парсер світла",
+  "description": "Scraper for power outages",
   "main": "scrape.js",
   "scripts": {
     "start": "node scrape.js"
