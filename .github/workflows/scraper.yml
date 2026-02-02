@@ -2,7 +2,7 @@ name: Update Power Schedule
 
 on:
   schedule:
-    - cron: '*/15 * * * *'
+    - cron: '*/20 * * * *' # Змінив на 20 хв, щоб не спамити чергу
   workflow_dispatch:
 
 permissions:
@@ -20,11 +20,9 @@ jobs:
         with:
           node-version: '18'
 
-      # Встановлення системних залежностей для Chrome (це виправить зависання)
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgbm-dev libasound2 libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libxkbcommon-x11-0 libxcomposite1 libxdamage1 libxrandr2
+      # МАГІЯ: Ця дія ставить правильний Chrome для GitHub Actions
+      - name: Setup Chrome
+        uses: browser-actions/setup-chrome@latest
 
       - name: Install libraries
         run: npm install
@@ -32,11 +30,12 @@ jobs:
       - name: Run Scraper
         run: node scrape.js
         env:
-          PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: 'false'
+          PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: 'true'
+          PUPPETEER_EXECUTABLE_PATH: /usr/bin/google-chrome
 
       - name: Save Result
         run: |
           git config --global user.name 'GitHub Action'
           git config --global user.email 'action@github.com'
-          git add power_data.json || echo "No new file found"
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update schedule" && git push)
+          git add power_data.json || echo "No file to add"
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update" && git push)
