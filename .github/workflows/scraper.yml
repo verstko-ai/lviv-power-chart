@@ -2,7 +2,7 @@ name: Update Power Schedule
 
 on:
   schedule:
-    - cron: '*/20 * * * *' # Змінив на 20 хв, щоб не спамити чергу
+    - cron: '7,27,47 * * * *' # Змінив на 20 хв, щоб не спамити чергу
   workflow_dispatch:
 
 permissions:
