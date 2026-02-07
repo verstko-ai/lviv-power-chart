@@ -9,15 +9,47 @@
     
 <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
 <style>
+    :root {
+        --bg-body: #fafafa;
+        --bg-card: #ffffff;
+        --text-main: #333333;
+        --text-sub: #666666;
+        --border-color: #dddddd;
+        --hover-bg: #e0e0e0;
+        --btn-bg: #f0f0f0;
+        --shadow: rgba(0,0,0,0.05);
+        --chart-grid: #eeeeee;
+        --chart-bg: #ffffff;
+        --toast-bg: #333;
+        --toast-text: #fff;
+    }
+
+    [data-theme="dark"] {
+        --bg-body: #121212;
+        --bg-card: #1e1e1e;
+        --text-main: #e0e0e0;
+        --text-sub: #aaaaaa;
+        --border-color: #333333;
+        --hover-bg: #333333;
+        --btn-bg: #2d2d2d;
+        --shadow: rgba(0,0,0,0.3);
+        --chart-grid: #333333;
+        --chart-bg: #1e1e1e;
+        --toast-bg: #ffffff;
+        --toast-text: #000000;
+    }
+
     body { 
         font-family: 'Segoe UI', Arial, sans-serif; 
         margin: 0; 
         padding: 10px; 
-        background: #fafafa; 
+        background: var(--bg-body); 
+        color: var(--text-main);
         display: flex;
         flex-direction: column;
         height: 100vh;
         box-sizing: border-box;
+        transition: background 0.3s, color 0.3s;
     }
     
     .header-controls {
@@ -27,58 +59,67 @@
         margin-bottom: 10px;
         flex-wrap: wrap;
         gap: 10px;
-        background: white;
+        background: var(--bg-card);
         padding: 10px;
         border-radius: 8px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        box-shadow: 0 2px 4px var(--shadow);
+        transition: background 0.3s;
     }
 
     .header-info { flex-grow: 1; }
-    h1 { margin: 0; font-size: 1.2rem; color: #333; }
-    #updated { color: #666; font-size: 0.75rem; margin-top: 2px; }
+    h1 { margin: 0; font-size: 1.2rem; color: var(--text-main); }
+    #updated { color: var(--text-sub); font-size: 0.75rem; margin-top: 2px; }
 
     .controls-wrapper { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
-    /* Стилі для селектів */
-    .selector {
+    /* Стилі для селектів та кнопок */
+    .selector, .refresh-btn, .theme-btn {
         padding: 8px 12px;
-        border: 1px solid #ddd;
+        border: 1px solid var(--border-color);
         border-radius: 6px;
         font-size: 1rem;
-        background: #fff;
-        color: #333;
+        background: var(--bg-card);
+        color: var(--text-main);
         cursor: pointer;
         outline: none;
+        transition: background 0.2s, border-color 0.2s, color 0.2s;
     }
 
-    .refresh-btn {
-        padding: 8px 12px;
-        background: #f0f0f0;
-        border: 1px solid #ddd;
-        border-radius: 6px;
-        cursor: pointer;
-        font-size: 1.1rem;
-        transition: all 0.2s;
+    .refresh-btn, .theme-btn {
+        background: var(--btn-bg);
         display: flex;
         align-items: center;
         justify-content: center;
-        color: #555;
     }
-    .refresh-btn:hover:not(:disabled) { background: #e0e0e0; color: #000; }
+
+    .selector:hover, .refresh-btn:hover:not(:disabled), .theme-btn:hover { 
+        background: var(--hover-bg); 
+    }
+    
     .refresh-btn:disabled { opacity: 0.6; cursor: not-allowed; }
     .spin { animation: spin 1s linear infinite; }
     @keyframes spin { 100% { transform: rotate(360deg); } }
 
     #chart { width: 100%; flex-grow: 1; min-height: 400px; }
-    .error { color: #d32f2f; font-weight: bold; padding: 20px; background: #ffebee; border-radius: 4px; }
-    .info-badge { display: inline-block; background: #e1f5fe; color: #0277bd; padding: 2px 6px; border-radius: 4px; font-size: 0.7rem; margin-top: 2px;}
+    .error { color: #d32f2f; font-weight: bold; padding: 20px; background: rgba(255, 0, 0, 0.1); border-radius: 4px; }
+    
+    .info-badge { 
+        display: inline-block; 
+        background: rgba(2, 119, 189, 0.15); 
+        color: #0277bd; 
+        padding: 2px 6px; 
+        border-radius: 4px; 
+        font-size: 0.7rem; 
+        margin-top: 2px;
+    }
+    [data-theme="dark"] .info-badge { color: #4fc3f7; background: rgba(79, 195, 247, 0.15); }
 
     .toast {
         visibility: hidden;
         min-width: 250px;
         margin-left: -125px;
-        background-color: #333;
-        color: #fff;
+        background-color: var(--toast-bg);
+        color: var(--toast-text);
         text-align: center;
         border-radius: 8px;
         padding: 16px;
@@ -92,11 +133,7 @@
         transition: opacity 0.5s, bottom 0.5s;
         border-left: 5px solid #32CD32;
     }
-    .toast.show {
-        visibility: visible;
-        opacity: 1;
-        bottom: 50px;
-    }
+    .toast.show { visibility: visible; opacity: 1; bottom: 50px; }
     .toast-title { font-weight: bold; display: block; margin-bottom: 5px; font-size: 1.1rem;}
 </style>
 </head>
@@ -116,6 +153,10 @@
             <option value="all">Всі групи</option>
         </select>
         
+        <button class="theme-btn" onclick="toggleTheme()" title="Змінити тему">
+            <span id="themeIcon">🌓</span>
+        </button>
+
         <button id="refreshBtn" class="refresh-btn" onclick="manualRefresh()" title="Оновити дані">
             <span id="refreshIcon">🔄</span>
         </button>
@@ -133,13 +174,13 @@
 // --- НАЛАШТУВАННЯ ---
 const LINE_WIDTH = 30; 
 const PALETTE = ['#FFA500', '#32CD32', '#1E90FF', '#9370DB', '#FF69B4', '#00CED1'];
-const COLOR_POWER_OFF = "#333333"; 
+// Кольори для зон
+const COLOR_POWER_OFF_LIGHT = "#333333"; 
+const COLOR_POWER_OFF_DARK = "#000000"; // Чорний для темної теми, щоб виділятися на темно-сірому фоні
 const COLOR_MIDNIGHT = "#00008B"; 
 const TOP_AXIS_ANCHOR = "AXIS_ACTIVATOR";
-// Шаблон груп за замовчуванням (для general)
 const DEFAULT_TEMPLATE = ["1.1", "1.2", "2.1", "2.2", "3.1", "3.2", "4.1", "4.2", "5.1", "5.2", "6.1", "6.2"];
 
-// Красиві назви для відомих регіонів
 const REGION_NAMES = {
     "general": "Львів та область",
     "sheptytskyi": "Шептицький р-н",
@@ -150,6 +191,43 @@ let isUpdating = false;
 let previousSchedulesStr = ""; 
 let currentJsonData = null; 
 let selectedRegion = localStorage.getItem('selectedRegion') || "general"; 
+
+// --- ЛОГІКА ТЕМИ ---
+function initTheme() {
+    const savedTheme = localStorage.getItem('theme');
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    
+    if (savedTheme === 'dark' || (!savedTheme && prefersDark)) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+        updateThemeIcon(true);
+    } else {
+        document.documentElement.setAttribute('data-theme', 'light');
+        updateThemeIcon(false);
+    }
+}
+
+function toggleTheme() {
+    const currentTheme = document.documentElement.getAttribute('data-theme');
+    const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+    
+    document.documentElement.setAttribute('data-theme', newTheme);
+    localStorage.setItem('theme', newTheme);
+    updateThemeIcon(newTheme === 'dark');
+    
+    // Перемальовуємо графік, якщо дані є, щоб оновити кольори сітки
+    if (currentJsonData) {
+        renderChart(currentJsonData);
+    }
+}
+
+function updateThemeIcon(isDark) {
+    document.getElementById('themeIcon').innerText = isDark ? '☀️' : '🌙';
+}
+
+// Запускаємо перевірку теми одразу
+initTheme();
+
+// --- ОСНОВНА ЛОГІКА ---
 
 function getGroupColor(groupName) {
     const match = groupName.match(/\d+/);
@@ -196,7 +274,6 @@ function showNotification() {
 }
 
 function changeRegion(regionKey) {
-    console.log("Change region to:", regionKey);
     selectedRegion = regionKey;
     localStorage.setItem('selectedRegion', regionKey);
     if (currentJsonData) {
@@ -247,7 +324,6 @@ async function loadPowerData() {
     }
 }
 
-// Функція безпечного отримання даних конкретного регіону
 function getRegionData(json, dateStr, regionKey) {
     if (json.schedules && json.schedules[dateStr]) {
         if (json.schedules[dateStr][regionKey]) {
@@ -258,16 +334,21 @@ function getRegionData(json, dateStr, regionKey) {
 }
 
 function renderChart(json) {
+    // Визначення кольорів залежно від теми
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    const chartBgColor = isDark ? '#1e1e1e' : '#ffffff';
+    const gridColor = isDark ? '#333333' : '#eeeeee';
+    const textColor = isDark ? '#e0e0e0' : '#333333';
+    const powerOffColor = isDark ? COLOR_POWER_OFF_DARK : COLOR_POWER_OFF_LIGHT;
+
     let dateKeys = Object.keys(json.schedules || {}).sort((a, b) => parseDateKey(a) - parseDateKey(b));
     
-    // --- 1. ОНОВЛЕННЯ СПИСКУ РЕГІОНІВ ---
     const availableRegions = new Set(["general"]); 
     dateKeys.forEach(date => {
         const regionsInDate = Object.keys(json.schedules[date]);
         regionsInDate.forEach(r => availableRegions.add(r));
     });
     updateRegionSelector([...availableRegions]);
-    // ------------------------------------
 
     const today = new Date();
     today.setHours(0,0,0,0);
@@ -277,38 +358,24 @@ function renderChart(json) {
     tomorrow.setDate(today.getDate() + 1);
     const tomorrowKey = formatDateKey(tomorrow);
 
-    // --- 2. ОТРИМАННЯ ДАНИХ ДЛЯ ОБРАНОГО РЕГІОНУ ---
     const schedToday = getRegionData(json, todayKey, selectedRegion);
     const schedTomorrow = getRegionData(json, tomorrowKey, selectedRegion);
 
-    // Вечірній режим: вмикаємо, якщо є дані на завтра
     const hasDataForTomorrow = Object.keys(schedTomorrow).length > 0;
     const isCombinedMode = hasDataForTomorrow;
     
     let traces = [];
     let finalGroups = new Set(); 
     
-    // *** ГОЛОВНА ЛОГІКА ВІДОБРАЖЕННЯ ГРУП ***
-    // 1. Якщо це General (Львів): ЗАВЖДИ додаємо шаблонні групи (1.1-6.2).
-    // Навіть якщо даних немає, вони будуть відображені як "світло є".
     if (selectedRegion === "general") {
         DEFAULT_TEMPLATE.forEach(g => finalGroups.add(g));
     }
-
-    // 2. Додаємо групи, які реально існують в JSON.
-    // Для General це можуть бути нові (7.1).
-    // Для інших регіонів (Sheptytskyi) це БУДУТЬ ЄДИНІ групи, які додадуться.
     if (Object.keys(schedToday).length > 0) {
         Object.keys(schedToday).forEach(g => finalGroups.add(g));
     }
-    
     if (isCombinedMode) {
         Object.keys(schedTomorrow).forEach(g => finalGroups.add(g));
     }
-
-    // *** Fallback: Якщо для спец-регіону немає даних взагалі - покажемо пустий графік, 
-    // але не крашимось. Можна додати дефолтні, але за умовою "тільки те, що записано".
-    // ----------------------------------------------------
 
     let chartTitle = "";
     let globalXMax = 1440; 
@@ -326,8 +393,8 @@ function renderChart(json) {
         globalXMin = startLookback * 60; 
         globalXMax = 1440 + 1440; 
 
-        processDayData(schedToday, 0, traces, finalGroups);
-        processDayData(schedTomorrow, 1440, traces, finalGroups);
+        processDayData(schedToday, 0, traces, finalGroups, powerOffColor);
+        processDayData(schedTomorrow, 1440, traces, finalGroups, powerOffColor);
 
         midnightShape = {
             type: 'line', x0: 1440, x1: 1440, y0: -0.5, y1: 1, 
@@ -335,31 +402,25 @@ function renderChart(json) {
         };
 
     } else {
-        // Якщо даних на сьогодні немає (і не режим Комбо), 
-        // fallback на першу доступну дату в JSON або лишаємо todayKey
         let targetDate = todayKey;
         if (!json.schedules[todayKey] && dateKeys.length > 0) {
              targetDate = dateKeys[0];
         }
 
         chartTitle = `Графік на ${targetDate} (${regionDisplayName})`;
-        
-        // Перечитуємо дані для targetDate (у випадку fallback)
         const schedTarget = getRegionData(json, targetDate, selectedRegion);
         
-        // Для General оновлюємо групи, якщо дата змінилась (хоча шаблон вже доданий)
         if (selectedRegion === "general") {
              DEFAULT_TEMPLATE.forEach(g => finalGroups.add(g));
         }
         Object.keys(schedTarget).forEach(g => finalGroups.add(g));
 
-        processDayData(schedTarget, 0, traces, finalGroups);
+        processDayData(schedTarget, 0, traces, finalGroups, powerOffColor);
     }
 
     document.getElementById("title").innerText = chartTitle;
 
     let rawGroups = [...finalGroups];
-    // Фільтруємо сміття
     let filteredGroups = rawGroups.filter(g => g && g.toString().trim() !== "" && g !== "0").sort();
 
     updateGroupSelector(filteredGroups);
@@ -368,7 +429,8 @@ function renderChart(json) {
         traces.push(createAxisActivatorTrace(globalXMin, globalXMax, filteredGroups[0]));
     }
 
-    buildChart(traces, filteredGroups, globalXMin, globalXMax, midnightShape, isCombinedMode);
+    // Будуємо графік з урахуванням теми
+    buildChart(traces, filteredGroups, globalXMin, globalXMax, midnightShape, isCombinedMode, chartBgColor, gridColor, textColor);
 
     const savedGroup = localStorage.getItem('selectedGroup');
     if (savedGroup) {
@@ -437,7 +499,7 @@ function createAxisActivatorTrace(xMin, xMax, targetGroup) {
     };
 }
 
-function processDayData(schedule, offset, traces, allGroups) {
+function processDayData(schedule, offset, traces, allGroups, offColor) {
     allGroups.forEach(group => {
         if (!group || group === "0") return;
         
@@ -460,7 +522,8 @@ function processDayData(schedule, offset, traces, allGroups) {
                     traces.push(createTrace(group, last, start, groupColor, "Світло є"));
                 }
                 const timeLabel = formatTime(start - offset) + " - " + formatTime(end - offset);
-                traces.push(createTrace(group, start, end, COLOR_POWER_OFF, `ВІДКЛЮЧЕННЯ: ${timeLabel}`));
+                // Використовуємо переданий колір відключення (залежний від теми)
+                traces.push(createTrace(group, start, end, offColor, `ВІДКЛЮЧЕННЯ: ${timeLabel}`));
                 last = end;
             });
             if (last < dayEnd) {
@@ -480,7 +543,7 @@ function createTrace(group, start, end, color, text) {
     };
 }
 
-function buildChart(traces, groups, xMin, xMax, midnightShape, isCombined) {
+function buildChart(traces, groups, xMin, xMax, midnightShape, isCombined, bgColor, gridColor, textColor) {
     const tickVals = [];
     const tickText = [];
     
@@ -502,7 +565,8 @@ function buildChart(traces, groups, xMin, xMax, midnightShape, isCombined) {
             shapes.push({
                 type: 'line', layer: 'above', xref: 'x', yref: 'paper',
                 x0: i, x1: i, y0: 0, y1: 1,
-                line: { color: 'rgba(0, 0, 0, 0.15)', width: 1, dash: 'solid' }
+                // Колір вертикальних ліній сітки (годин)
+                line: { color: gridColor, width: 1, dash: 'solid' }
             });
         }
     }
@@ -525,25 +589,40 @@ function buildChart(traces, groups, xMin, xMax, midnightShape, isCombined) {
 
     const layout = {
         margin: { t: 50, b: 40, l: 40, r: 10 },
+        // Налаштування фону
+        paper_bgcolor: bgColor,
+        plot_bgcolor: bgColor,
+        font: { color: textColor },
+        
         xaxis: {
             title: "", range: [xMin, xMax], tickvals: tickVals, ticktext: tickText,
-            fixedrange: true, gridcolor: '#eee', showgrid: true
+            fixedrange: true, 
+            gridcolor: gridColor, 
+            showgrid: true,
+            tickfont: { color: textColor }
         },
         yaxis: {
             title: "", type: "category", categoryorder: "array", categoryarray: [...groups].reverse(),
-            fixedrange: true, showgrid: true, zeroline: false
+            fixedrange: true, 
+            showgrid: true, 
+            gridcolor: gridColor,
+            zeroline: false,
+            tickfont: { color: textColor }
         },
         xaxis2: {
             title: "", overlaying: 'x', side: 'top',     
             range: [xMin, xMax], tickvals: tickVals, ticktext: tickText,
-            fixedrange: true, showgrid: false, zeroline: false, automargin: true 
+            fixedrange: true, showgrid: false, zeroline: false, automargin: true,
+            tickfont: { color: textColor }
         },
         hovermode: 'closest', shapes: shapes, height: totalGroups * 50 + 80,
         annotations: [{
             x: currentTime, y: lineYMax, xref: 'x', yref: 'y',
             text: formatTime(currentTime % 1440), showarrow: false, yshift: 10,
             font: { color: '#d32f2f', size: 12, weight: 'bold' },
-            bgcolor: 'rgba(255,255,255,0.9)', bordercolor: '#d32f2f',
+            // Фон для тексту часу теж адаптуємо, але лишаємо світлим для контрасту з червоним
+            bgcolor: 'rgba(255,255,255,0.9)', 
+            bordercolor: '#d32f2f',
             borderwidth: 1, borderpad: 2, opacity: 1
         }]
     };
@@ -589,4 +668,3 @@ setInterval(() => loadPowerData(), 900000);
 </script>
 </body>
 </html>
-
