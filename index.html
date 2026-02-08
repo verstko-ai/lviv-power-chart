@@ -22,6 +22,8 @@
         --chart-bg: #ffffff;
         --toast-bg: #333;
         --toast-text: #fff;
+        --stat-good: #4caf50;
+        --stat-bad: #f44336;
     }
 
     [data-theme="dark"] {
@@ -37,6 +39,8 @@
         --chart-bg: #1e1e1e;
         --toast-bg: #ffffff;
         --toast-text: #000000;
+        --stat-good: #2e7d32;
+        --stat-bad: #c62828;
     }
 
     body { 
@@ -70,9 +74,25 @@
     h1 { margin: 0; font-size: 1.2rem; color: var(--text-main); }
     #updated { color: var(--text-sub); font-size: 0.75rem; margin-top: 2px; }
 
+    /* Блок статистики */
+    .stats-badge {
+        display: inline-flex;
+        align-items: center;
+        margin-top: 5px;
+        padding: 4px 8px;
+        border-radius: 6px;
+        font-weight: bold;
+        font-size: 0.9rem;
+        background: var(--btn-bg);
+        color: var(--text-main);
+        border: 1px solid var(--border-color);
+        transition: all 0.3s;
+    }
+    .stats-badge.off { background: rgba(244, 67, 54, 0.1); color: var(--stat-bad); border-color: var(--stat-bad); }
+    .stats-badge.on { background: rgba(76, 175, 80, 0.1); color: var(--stat-good); border-color: var(--stat-good); }
+
     .controls-wrapper { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
-    /* Стилі для селектів та кнопок */
     .selector, .refresh-btn, .theme-btn {
         padding: 8px 12px;
         border: 1px solid var(--border-color);
@@ -143,6 +163,7 @@
     <div class="header-info">
         <h1 id="title">Завантаження...</h1>
         <div id="updated"></div>
+        <div id="statsBadge" class="stats-badge" style="display: none;">Завантаження...</div>
     </div>
     <div class="controls-wrapper">
         <select id="regionSelect" class="selector" onchange="changeRegion(this.value)">
@@ -174,9 +195,8 @@
 // --- НАЛАШТУВАННЯ ---
 const LINE_WIDTH = 30; 
 const PALETTE = ['#FFA500', '#32CD32', '#1E90FF', '#9370DB', '#FF69B4', '#00CED1'];
-// Кольори для зон
 const COLOR_POWER_OFF_LIGHT = "#333333"; 
-const COLOR_POWER_OFF_DARK = "#000000"; // Чорний для темної теми, щоб виділятися на темно-сірому фоні
+const COLOR_POWER_OFF_DARK = "#000000"; 
 const COLOR_MIDNIGHT = "#00008B"; 
 const TOP_AXIS_ANCHOR = "AXIS_ACTIVATOR";
 const DEFAULT_TEMPLATE = ["1.1", "1.2", "2.1", "2.2", "3.1", "3.2", "4.1", "4.2", "5.1", "5.2", "6.1", "6.2"];
@@ -192,7 +212,6 @@ let previousSchedulesStr = "";
 let currentJsonData = null; 
 let selectedRegion = localStorage.getItem('selectedRegion') || "general"; 
 
-// --- ЛОГІКА ТЕМИ ---
 function initTheme() {
     const savedTheme = localStorage.getItem('theme');
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -209,25 +228,17 @@ function initTheme() {
 function toggleTheme() {
     const currentTheme = document.documentElement.getAttribute('data-theme');
     const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
-    
     document.documentElement.setAttribute('data-theme', newTheme);
     localStorage.setItem('theme', newTheme);
     updateThemeIcon(newTheme === 'dark');
-    
-    // Перемальовуємо графік, якщо дані є, щоб оновити кольори сітки
-    if (currentJsonData) {
-        renderChart(currentJsonData);
-    }
+    if (currentJsonData) renderChart(currentJsonData);
 }
 
 function updateThemeIcon(isDark) {
     document.getElementById('themeIcon').innerText = isDark ? '☀️' : '🌙';
 }
 
-// Запускаємо перевірку теми одразу
 initTheme();
-
-// --- ОСНОВНА ЛОГІКА ---
 
 function getGroupColor(groupName) {
     const match = groupName.match(/\d+/);
@@ -317,6 +328,8 @@ async function loadPowerData() {
         updateElem.innerHTML = `Оновлено: ${updateTime}`;
 
         renderChart(json);
+        // Оновлюємо лічильник одразу після завантаження
+        updateStatsCounter();
 
     } catch (error) {
         console.error(error);
@@ -333,8 +346,57 @@ function getRegionData(json, dateStr, regionKey) {
     return {};
 }
 
+// --- ФУНКЦІЯ ПІДРАХУНКУ ВІДКЛЮЧЕНИХ ГРУП ---
+function updateStatsCounter() {
+    if (!currentJsonData) return;
+
+    const now = new Date();
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+    const todayKey = formatDateKey(now);
+    
+    // Отримуємо дані для поточного регіону на сьогодні
+    const schedule = getRegionData(currentJsonData, todayKey, selectedRegion);
+    
+    let offCount = 0;
+    let totalGroupsChecked = 0;
+
+    // Перебираємо всі групи
+    for (const group in schedule) {
+        if (!group) continue;
+        totalGroupsChecked++;
+        const intervals = schedule[group];
+        let isOff = false;
+
+        // Перевіряємо кожен інтервал
+        for (const interval of intervals) {
+            const [startStr, endStr] = interval.split("-");
+            const start = toMinutes(startStr);
+            const end = toMinutes(endStr);
+
+            // ГОЛОВНА ЛОГІКА: Початок включно, кінець виключно
+            // Якщо зараз 18:00, а інтервал до 18:00 -> false (світло є)
+            // Якщо зараз 18:00, а інтервал з 18:00 -> true (світла немає)
+            if (currentMinutes >= start && currentMinutes < end) {
+                isOff = true;
+                break;
+            }
+        }
+        if (isOff) offCount++;
+    }
+
+    const badge = document.getElementById('statsBadge');
+    badge.style.display = 'inline-flex';
+    
+    if (offCount > 0) {
+        badge.innerText = `Зараз без світла: ${offCount} гр.`;
+        badge.className = 'stats-badge off';
+    } else {
+        badge.innerText = `Зараз зі світлом: всі групи`;
+        badge.className = 'stats-badge on';
+    }
+}
+
 function renderChart(json) {
-    // Визначення кольорів залежно від теми
     const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
     const chartBgColor = isDark ? '#1e1e1e' : '#ffffff';
     const gridColor = isDark ? '#333333' : '#eeeeee';
@@ -429,7 +491,6 @@ function renderChart(json) {
         traces.push(createAxisActivatorTrace(globalXMin, globalXMax, filteredGroups[0]));
     }
 
-    // Будуємо графік з урахуванням теми
     buildChart(traces, filteredGroups, globalXMin, globalXMax, midnightShape, isCombinedMode, chartBgColor, gridColor, textColor);
 
     const savedGroup = localStorage.getItem('selectedGroup');
@@ -522,7 +583,6 @@ function processDayData(schedule, offset, traces, allGroups, offColor) {
                     traces.push(createTrace(group, last, start, groupColor, "Світло є"));
                 }
                 const timeLabel = formatTime(start - offset) + " - " + formatTime(end - offset);
-                // Використовуємо переданий колір відключення (залежний від теми)
                 traces.push(createTrace(group, start, end, offColor, `ВІДКЛЮЧЕННЯ: ${timeLabel}`));
                 last = end;
             });
@@ -565,7 +625,6 @@ function buildChart(traces, groups, xMin, xMax, midnightShape, isCombined, bgCol
             shapes.push({
                 type: 'line', layer: 'above', xref: 'x', yref: 'paper',
                 x0: i, x1: i, y0: 0, y1: 1,
-                // Колір вертикальних ліній сітки (годин)
                 line: { color: gridColor, width: 1, dash: 'solid' }
             });
         }
@@ -589,24 +648,17 @@ function buildChart(traces, groups, xMin, xMax, midnightShape, isCombined, bgCol
 
     const layout = {
         margin: { t: 50, b: 40, l: 40, r: 10 },
-        // Налаштування фону
         paper_bgcolor: bgColor,
         plot_bgcolor: bgColor,
         font: { color: textColor },
-        
         xaxis: {
             title: "", range: [xMin, xMax], tickvals: tickVals, ticktext: tickText,
-            fixedrange: true, 
-            gridcolor: gridColor, 
-            showgrid: true,
+            fixedrange: true, gridcolor: gridColor, showgrid: true,
             tickfont: { color: textColor }
         },
         yaxis: {
             title: "", type: "category", categoryorder: "array", categoryarray: [...groups].reverse(),
-            fixedrange: true, 
-            showgrid: true, 
-            gridcolor: gridColor,
-            zeroline: false,
+            fixedrange: true, showgrid: true, gridcolor: gridColor, zeroline: false,
             tickfont: { color: textColor }
         },
         xaxis2: {
@@ -620,9 +672,7 @@ function buildChart(traces, groups, xMin, xMax, midnightShape, isCombined, bgCol
             x: currentTime, y: lineYMax, xref: 'x', yref: 'y',
             text: formatTime(currentTime % 1440), showarrow: false, yshift: 10,
             font: { color: '#d32f2f', size: 12, weight: 'bold' },
-            // Фон для тексту часу теж адаптуємо, але лишаємо світлим для контрасту з червоним
-            bgcolor: 'rgba(255,255,255,0.9)', 
-            bordercolor: '#d32f2f',
+            bgcolor: 'rgba(255,255,255,0.9)', bordercolor: '#d32f2f',
             borderwidth: 1, borderpad: 2, opacity: 1
         }]
     };
@@ -644,10 +694,13 @@ function getCurrentTotalMinutes() {
 
 function startClockUpdate() {
     if (window.clockInterval) clearInterval(window.clockInterval);
+    
+    // Оновлення кожну хвилину
     window.clockInterval = setInterval(() => {
         const current = getCurrentTotalMinutes();
         const timeStr = formatTime(current % 1440);
         
+        // 1. Оновлюємо лінію часу на графіку
         const chartDiv = document.getElementById('chart');
         if (chartDiv && chartDiv.layout && chartDiv.layout.shapes) {
             const lastShapeIndex = chartDiv.layout.shapes.length - 1;
@@ -659,7 +712,11 @@ function startClockUpdate() {
             };
             Plotly.relayout("chart", update).catch(() => {});
         }
-    }, 60000);
+        
+        // 2. Оновлюємо статистику (лічильник)
+        updateStatsCounter();
+        
+    }, 60000); // 60 секунд
 }
 
 loadPowerData();
