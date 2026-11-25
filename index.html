@@ -727,8 +727,14 @@ function applyGroupHighlight() {
     });
     Plotly.restyle('chart', { opacity: opacities });
 
-    if (chartDiv.layout && chartDiv.layout.annotations && chartDiv.layout.annotations.length > 1) {
-        const clockAnn = chartDiv.layout.annotations[0];
+    if (chartDiv.layout && chartDiv.layout.annotations && chartDiv.layout.annotations.length > 0) {
+        const current = getCurrentTotalMinutes();
+        const timeStr = formatTime(current % 1440);
+        const clockAnn = {
+            ...chartDiv.layout.annotations[0],
+            x: current,
+            text: timeStr
+        };
         const updatedOutageAnns = outageDurationAnnotations.map(item => ({
             ...item.ann,
             opacity: (showAll || selectedGroups.includes(String(item.group))) ? 1 : 0.1
@@ -780,6 +786,8 @@ function processDayData(schedule, offset, traces, allGroups, offColor) {
                             y: group,
                             xref: 'x',
                             yref: 'y',
+                            xanchor: 'center',
+                            yanchor: 'middle',
                             text: String(hours),
                             showarrow: false,
                             font: {
