@@ -296,6 +296,7 @@ let previousSchedulesStr = "";
 let currentJsonData = null; 
 let selectedRegion = localStorage.getItem('selectedRegion') || "general"; 
 let selectedGroups = loadSavedGroups();
+let outageDurationAnnotations = [];
 
 function loadSavedGroups() {
     try {
@@ -304,7 +305,6 @@ function loadSavedGroups() {
             const parsed = JSON.parse(raw);
             if (Array.isArray(parsed)) return parsed;
         }
-        // Міграція зі старого формату одиночного вибору
         const legacy = localStorage.getItem('selectedGroup');
         if (legacy && legacy !== 'all') return [legacy];
     } catch (e) {}
@@ -518,6 +518,7 @@ function renderChart(json) {
     
     let traces = [];
     let finalGroups = new Set(); 
+    outageDurationAnnotations = [];
     
     if (selectedRegion === "general") {
         DEFAULT_TEMPLATE.forEach(g => finalGroups.add(g));
@@ -575,7 +576,6 @@ function renderChart(json) {
     let rawGroups = [...finalGroups];
     let filteredGroups = rawGroups.filter(g => g && g.toString().trim() !== "" && g !== "0").sort();
 
-    // Очищаємо збережені групи, яких немає в поточному регіоні
     selectedGroups = selectedGroups.filter(g => filteredGroups.includes(g));
     localStorage.setItem('selectedGroups', JSON.stringify(selectedGroups));
 
@@ -627,7 +627,6 @@ function updateGroupSelector(groups) {
     const menu = document.getElementById('groupDropdownMenu');
     menu.innerHTML = '';
 
-    // Пункт "Всі групи"
     const allLabel = document.createElement('label');
     allLabel.className = 'multiselect-item';
     const allCheckbox = document.createElement('input');
@@ -650,7 +649,6 @@ function updateGroupSelector(groups) {
     divider.className = 'multiselect-divider';
     menu.appendChild(divider);
 
-    // Пункти окремих груп
     groups.forEach(g => {
         const label = document.createElement('label');
         label.className = 'multiselect-item';
@@ -666,7 +664,6 @@ function updateGroupSelector(groups) {
             } else {
                 selectedGroups = selectedGroups.filter(item => item !== g);
             }
-            // Якщо вручну відмітили абсолютно всі групи — скидаємо у режим "Всі"
             if (selectedGroups.length === groups.length) {
                 selectedGroups = [];
             }
@@ -729,6 +726,15 @@ function applyGroupHighlight() {
         return 0.1; 
     });
     Plotly.restyle('chart', { opacity: opacities });
+
+    if (chartDiv.layout && chartDiv.layout.annotations && chartDiv.layout.annotations.length > 1) {
+        const clockAnn = chartDiv.layout.annotations[0];
+        const updatedOutageAnns = outageDurationAnnotations.map(item => ({
+            ...item.ann,
+            opacity: (showAll || selectedGroups.includes(String(item.group))) ? 1 : 0.1
+        }));
+        Plotly.relayout('chart', { annotations: [clockAnn, ...updatedOutageAnns] }).catch(() => {});
+    }
 }
 
 function createAxisActivatorTrace(xMin, xMax, targetGroup) {
@@ -764,6 +770,28 @@ function processDayData(schedule, offset, traces, allGroups, offColor) {
                 }
                 const timeLabel = formatTime(start - offset) + " - " + formatTime(end - offset);
                 traces.push(createTrace(group, start, end, offColor, `ВІДКЛЮЧЕННЯ: ${timeLabel}`));
+
+                const hours = Math.round((end - start) / 60);
+                if (hours > 0) {
+                    outageDurationAnnotations.push({
+                        group: String(group),
+                        ann: {
+                            x: (start + end) / 2,
+                            y: group,
+                            xref: 'x',
+                            yref: 'y',
+                            text: String(hours),
+                            showarrow: false,
+                            font: {
+                                color: '#ffffff',
+                                size: 11,
+                                weight: 'bold'
+                            },
+                            opacity: 1
+                        }
+                    });
+                }
+
                 last = end;
             });
             if (last < dayEnd) {
@@ -826,6 +854,14 @@ function buildChart(traces, groups, xMin, xMax, midnightShape, isCombined, bgCol
         line: { color: "#d32f2f", width: 2, dash: "solid" }, layer: 'above'
     });
 
+    const clockAnnotation = {
+        x: currentTime, y: lineYMax, xref: 'x', yref: 'y',
+        text: formatTime(currentTime % 1440), showarrow: false, yshift: 10,
+        font: { color: '#d32f2f', size: 12, weight: 'bold' },
+        bgcolor: 'rgba(255,255,255,0.9)', bordercolor: '#d32f2f',
+        borderwidth: 1, borderpad: 2, opacity: 1
+    };
+
     const layout = {
         margin: { t: 50, b: 40, l: 40, r: 10 },
         paper_bgcolor: bgColor,
@@ -848,13 +884,7 @@ function buildChart(traces, groups, xMin, xMax, midnightShape, isCombined, bgCol
             tickfont: { color: textColor }
         },
         hovermode: 'closest', shapes: shapes, height: totalGroups * 50 + 80,
-        annotations: [{
-            x: currentTime, y: lineYMax, xref: 'x', yref: 'y',
-            text: formatTime(currentTime % 1440), showarrow: false, yshift: 10,
-            font: { color: '#d32f2f', size: 12, weight: 'bold' },
-            bgcolor: 'rgba(255,255,255,0.9)', bordercolor: '#d32f2f',
-            borderwidth: 1, borderpad: 2, opacity: 1
-        }]
+        annotations: [clockAnnotation, ...outageDurationAnnotations.map(item => item.ann)]
     };
     
     Plotly.newPlot("chart", traces, layout, {responsive: true, displayModeBar: false});
