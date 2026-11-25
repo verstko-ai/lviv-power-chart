@@ -296,7 +296,6 @@ let previousSchedulesStr = "";
 let currentJsonData = null; 
 let selectedRegion = localStorage.getItem('selectedRegion') || "general"; 
 let selectedGroups = loadSavedGroups();
-let outageDurationAnnotations = [];
 
 function loadSavedGroups() {
     try {
@@ -525,7 +524,6 @@ function renderChart(json) {
     
     let traces = [];
     let finalGroups = new Set(); 
-    outageDurationAnnotations = [];
     
     if (selectedRegion === "general") {
         DEFAULT_TEMPLATE.forEach(g => finalGroups.add(g));
@@ -733,21 +731,6 @@ function applyGroupHighlight() {
         return 0.1; 
     });
     Plotly.restyle('chart', { opacity: opacities });
-
-    if (chartDiv.layout && chartDiv.layout.annotations && chartDiv.layout.annotations.length > 0) {
-        const current = getCurrentTotalMinutes();
-        const timeStr = formatTime(current % 1440);
-        const clockAnn = {
-            ...chartDiv.layout.annotations[0],
-            x: current,
-            text: timeStr
-        };
-        const updatedOutageAnns = outageDurationAnnotations.map(item => ({
-            ...item.ann,
-            opacity: (showAll || selectedGroups.includes(String(item.group))) ? 1 : 0.1
-        }));
-        Plotly.relayout('chart', { annotations: [clockAnn, ...updatedOutageAnns] }).catch(() => {});
-    }
 }
 
 function createAxisActivatorTrace(xMin, xMax, targetGroup) {
@@ -756,6 +739,23 @@ function createAxisActivatorTrace(xMin, xMax, targetGroup) {
         mode: "lines", line: { width: 0, color: 'rgba(0,0,0,0)' }, 
         opacity: 0, hoverinfo: "none", showlegend: false, 
         xaxis: 'x2', yaxis: 'y', name: TOP_AXIS_ANCHOR
+    };
+}
+
+function createDurationLabelTrace(group, start, end, text) {
+    return {
+        x: [(start + end) / 2],
+        y: [group],
+        mode: "text",
+        text: [text],
+        textposition: "middle center",
+        textfont: {
+            color: "#ffffff",
+            size: 11,
+            family: "Segoe UI, Arial, sans-serif"
+        },
+        hoverinfo: "skip",
+        showlegend: false
     };
 }
 
@@ -786,25 +786,7 @@ function processDayData(schedule, offset, traces, allGroups, offColor) {
 
                 const durationText = formatDurationHours(start, end);
                 if (durationText) {
-                    outageDurationAnnotations.push({
-                        group: String(group),
-                        ann: {
-                            x: (start + end) / 2,
-                            y: group,
-                            xref: 'x',
-                            yref: 'y',
-                            xanchor: 'center',
-                            yanchor: 'middle',
-                            text: durationText,
-                            showarrow: false,
-                            font: {
-                                color: '#ffffff',
-                                size: 11,
-                                weight: 'bold'
-                            },
-                            opacity: 1
-                        }
-                    });
+                    traces.push(createDurationLabelTrace(group, start, end, durationText));
                 }
 
                 last = end;
@@ -869,14 +851,6 @@ function buildChart(traces, groups, xMin, xMax, midnightShape, isCombined, bgCol
         line: { color: "#d32f2f", width: 2, dash: "solid" }, layer: 'above'
     });
 
-    const clockAnnotation = {
-        x: currentTime, y: lineYMax, xref: 'x', yref: 'y',
-        text: formatTime(currentTime % 1440), showarrow: false, yshift: 10,
-        font: { color: '#d32f2f', size: 12, weight: 'bold' },
-        bgcolor: 'rgba(255,255,255,0.9)', bordercolor: '#d32f2f',
-        borderwidth: 1, borderpad: 2, opacity: 1
-    };
-
     const layout = {
         margin: { t: 50, b: 40, l: 40, r: 10 },
         paper_bgcolor: bgColor,
@@ -899,7 +873,13 @@ function buildChart(traces, groups, xMin, xMax, midnightShape, isCombined, bgCol
             tickfont: { color: textColor }
         },
         hovermode: 'closest', shapes: shapes, height: totalGroups * 50 + 80,
-        annotations: [clockAnnotation, ...outageDurationAnnotations.map(item => item.ann)]
+        annotations: [{
+            x: currentTime, y: lineYMax, xref: 'x', yref: 'y',
+            text: formatTime(currentTime % 1440), showarrow: false, yshift: 10,
+            font: { color: '#d32f2f', size: 12, weight: 'bold' },
+            bgcolor: 'rgba(255,255,255,0.9)', bordercolor: '#d32f2f',
+            borderwidth: 1, borderpad: 2, opacity: 1
+        }]
     };
     
     Plotly.newPlot("chart", traces, layout, {responsive: true, displayModeBar: false});
