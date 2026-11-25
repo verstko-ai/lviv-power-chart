@@ -365,6 +365,13 @@ function formatDateKey(dateObj) {
     return `${dd}.${mm}.${yyyy}`;
 }
 
+function formatDurationHours(startMin, endMin) {
+    const halfHours = Math.round(((endMin - startMin) / 60) * 2);
+    if (halfHours <= 0) return "";
+    const hoursVal = halfHours / 2;
+    return String(hoursVal).replace('.', ',');
+}
+
 function showNotification() {
     const toast = document.getElementById("notificationToast");
     toast.className = "toast show";
@@ -777,8 +784,8 @@ function processDayData(schedule, offset, traces, allGroups, offColor) {
                 const timeLabel = formatTime(start - offset) + " - " + formatTime(end - offset);
                 traces.push(createTrace(group, start, end, offColor, `ВІДКЛЮЧЕННЯ: ${timeLabel}`));
 
-                const hours = Math.round((end - start) / 60);
-                if (hours > 0) {
+                const durationText = formatDurationHours(start, end);
+                if (durationText) {
                     outageDurationAnnotations.push({
                         group: String(group),
                         ann: {
@@ -788,7 +795,7 @@ function processDayData(schedule, offset, traces, allGroups, offColor) {
                             yref: 'y',
                             xanchor: 'center',
                             yanchor: 'middle',
-                            text: String(hours),
+                            text: durationText,
                             showarrow: false,
                             font: {
                                 color: '#ffffff',
