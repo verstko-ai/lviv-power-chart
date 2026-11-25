@@ -18,6 +18,7 @@
         --hover-bg: #e0e0e0;
         --btn-bg: #f0f0f0;
         --shadow: rgba(0,0,0,0.05);
+        --dropdown-shadow: rgba(0,0,0,0.15);
         --chart-grid: #eeeeee;
         --chart-bg: #ffffff;
         --toast-bg: #333;
@@ -35,6 +36,7 @@
         --hover-bg: #333333;
         --btn-bg: #2d2d2d;
         --shadow: rgba(0,0,0,0.3);
+        --dropdown-shadow: rgba(0,0,0,0.6);
         --chart-grid: #333333;
         --chart-bg: #1e1e1e;
         --toast-bg: #ffffff;
@@ -93,7 +95,7 @@
 
     .controls-wrapper { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
-    .selector, .refresh-btn, .theme-btn {
+    .selector, .refresh-btn, .theme-btn, .multiselect-btn {
         padding: 8px 12px;
         border: 1px solid var(--border-color);
         border-radius: 6px;
@@ -112,13 +114,91 @@
         justify-content: center;
     }
 
-    .selector:hover, .refresh-btn:hover:not(:disabled), .theme-btn:hover { 
+    .selector:hover, .refresh-btn:hover:not(:disabled), .theme-btn:hover, .multiselect-btn:hover { 
         background: var(--hover-bg); 
     }
     
     .refresh-btn:disabled { opacity: 0.6; cursor: not-allowed; }
     .spin { animation: spin 1s linear infinite; }
     @keyframes spin { 100% { transform: rotate(360deg); } }
+
+    /* Випадаючий список груп з чекбоксами */
+    .multiselect-wrapper {
+        position: relative;
+        display: inline-block;
+    }
+
+    .multiselect-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        min-width: 145px;
+        font-family: inherit;
+    }
+
+    .multiselect-arrow {
+        font-size: 0.7rem;
+        opacity: 0.75;
+    }
+
+    .multiselect-menu {
+        display: none;
+        position: absolute;
+        top: calc(100% + 4px);
+        right: 0;
+        min-width: 190px;
+        max-height: 320px;
+        overflow-y: auto;
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        box-shadow: 0 6px 16px var(--dropdown-shadow);
+        z-index: 1000;
+        padding: 4px 0;
+    }
+
+    .multiselect-menu.open {
+        display: block;
+    }
+
+    .multiselect-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 12px;
+        cursor: pointer;
+        user-select: none;
+        font-size: 0.95rem;
+        color: var(--text-main);
+        transition: background 0.15s;
+    }
+
+    .multiselect-item:hover {
+        background: var(--hover-bg);
+    }
+
+    .multiselect-item input[type="checkbox"] {
+        width: 16px;
+        height: 16px;
+        margin: 0;
+        cursor: pointer;
+        accent-color: #1E90FF;
+    }
+
+    .multiselect-divider {
+        height: 1px;
+        background: var(--border-color);
+        margin: 4px 0;
+    }
+
+    .group-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        display: inline-block;
+        flex-shrink: 0;
+    }
 
     #chart { width: 100%; flex-grow: 1; min-height: 400px; }
     .error { color: #d32f2f; font-weight: bold; padding: 20px; background: rgba(255, 0, 0, 0.1); border-radius: 4px; }
@@ -170,9 +250,13 @@
             <option value="general">Львів та область</option>
         </select>
         
-        <select id="groupSelect" class="selector" onchange="highlightGroup(this.value)">
-            <option value="all">Всі групи</option>
-        </select>
+        <div id="groupDropdown" class="multiselect-wrapper">
+            <button type="button" id="groupDropdownBtn" class="multiselect-btn" onclick="toggleGroupDropdown(event)">
+                <span id="groupDropdownLabel">👁️ Всі</span>
+                <span class="multiselect-arrow">▼</span>
+            </button>
+            <div id="groupDropdownMenu" class="multiselect-menu"></div>
+        </div>
         
         <button class="theme-btn" onclick="toggleTheme()" title="Змінити тему">
             <span id="themeIcon">🌓</span>
@@ -211,6 +295,21 @@ let isUpdating = false;
 let previousSchedulesStr = ""; 
 let currentJsonData = null; 
 let selectedRegion = localStorage.getItem('selectedRegion') || "general"; 
+let selectedGroups = loadSavedGroups();
+
+function loadSavedGroups() {
+    try {
+        const raw = localStorage.getItem('selectedGroups');
+        if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) return parsed;
+        }
+        // Міграція зі старого формату одиночного вибору
+        const legacy = localStorage.getItem('selectedGroup');
+        if (legacy && legacy !== 'all') return [legacy];
+    } catch (e) {}
+    return [];
+}
 
 function initTheme() {
     const savedTheme = localStorage.getItem('theme');
@@ -328,7 +427,6 @@ async function loadPowerData() {
         updateElem.innerHTML = `Оновлено: ${updateTime}`;
 
         renderChart(json);
-        // Оновлюємо лічильник одразу після завантаження
         updateStatsCounter();
 
     } catch (error) {
@@ -354,28 +452,20 @@ function updateStatsCounter() {
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
     const todayKey = formatDateKey(now);
     
-    // Отримуємо дані для поточного регіону на сьогодні
     const schedule = getRegionData(currentJsonData, todayKey, selectedRegion);
     
     let offCount = 0;
-    let totalGroupsChecked = 0;
 
-    // Перебираємо всі групи
     for (const group in schedule) {
         if (!group) continue;
-        totalGroupsChecked++;
         const intervals = schedule[group];
         let isOff = false;
 
-        // Перевіряємо кожен інтервал
         for (const interval of intervals) {
             const [startStr, endStr] = interval.split("-");
             const start = toMinutes(startStr);
             const end = toMinutes(endStr);
 
-            // ГОЛОВНА ЛОГІКА: Початок включно, кінець виключно
-            // Якщо зараз 18:00, а інтервал до 18:00 -> false (світло є)
-            // Якщо зараз 18:00, а інтервал з 18:00 -> true (світла немає)
             if (currentMinutes >= start && currentMinutes < end) {
                 isOff = true;
                 break;
@@ -485,6 +575,10 @@ function renderChart(json) {
     let rawGroups = [...finalGroups];
     let filteredGroups = rawGroups.filter(g => g && g.toString().trim() !== "" && g !== "0").sort();
 
+    // Очищаємо збережені групи, яких немає в поточному регіоні
+    selectedGroups = selectedGroups.filter(g => filteredGroups.includes(g));
+    localStorage.setItem('selectedGroups', JSON.stringify(selectedGroups));
+
     updateGroupSelector(filteredGroups);
 
     if (filteredGroups.length > 0) {
@@ -492,15 +586,7 @@ function renderChart(json) {
     }
 
     buildChart(traces, filteredGroups, globalXMin, globalXMax, midnightShape, isCombinedMode, chartBgColor, gridColor, textColor);
-
-    const savedGroup = localStorage.getItem('selectedGroup');
-    if (savedGroup) {
-        const select = document.getElementById('groupSelect');
-        if (select.querySelector(`option[value="${savedGroup}"]`)) {
-            select.value = savedGroup;
-            highlightGroup(savedGroup);
-        }
-    }
+    applyGroupHighlight();
 }
 
 function updateRegionSelector(regions) {
@@ -522,30 +608,124 @@ function updateRegionSelector(regions) {
     }
 }
 
+// --- МУЛЬТИСЕЛЕКТ ГРУП ---
+function toggleGroupDropdown(event) {
+    event.stopPropagation();
+    const menu = document.getElementById('groupDropdownMenu');
+    menu.classList.toggle('open');
+}
+
+document.addEventListener('click', (event) => {
+    const dropdown = document.getElementById('groupDropdown');
+    const menu = document.getElementById('groupDropdownMenu');
+    if (dropdown && menu && !dropdown.contains(event.target)) {
+        menu.classList.remove('open');
+    }
+});
+
 function updateGroupSelector(groups) {
-    const select = document.getElementById('groupSelect');
-    const currentVal = select.value;
-    select.innerHTML = '<option value="all">👁️ Всі</option>';
-    groups.forEach(g => {
-        const option = document.createElement('option');
-        option.value = g;
-        option.text = `Група ${g}`;
-        select.appendChild(option);
+    const menu = document.getElementById('groupDropdownMenu');
+    menu.innerHTML = '';
+
+    // Пункт "Всі групи"
+    const allLabel = document.createElement('label');
+    allLabel.className = 'multiselect-item';
+    const allCheckbox = document.createElement('input');
+    allCheckbox.type = 'checkbox';
+    allCheckbox.id = 'groupCheckAll';
+    allCheckbox.checked = selectedGroups.length === 0;
+    allCheckbox.addEventListener('change', () => {
+        selectedGroups = [];
+        localStorage.setItem('selectedGroups', JSON.stringify(selectedGroups));
+        syncCheckboxes(groups);
+        applyGroupHighlight();
     });
-    if (currentVal && groups.includes(currentVal)) {
-        select.value = currentVal;
+    const allText = document.createElement('span');
+    allText.textContent = '👁️ Всі групи';
+    allLabel.appendChild(allCheckbox);
+    allLabel.appendChild(allText);
+    menu.appendChild(allLabel);
+
+    const divider = document.createElement('div');
+    divider.className = 'multiselect-divider';
+    menu.appendChild(divider);
+
+    // Пункти окремих груп
+    groups.forEach(g => {
+        const label = document.createElement('label');
+        label.className = 'multiselect-item';
+
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.value = g;
+        cb.dataset.group = g;
+        cb.checked = selectedGroups.includes(g);
+        cb.addEventListener('change', () => {
+            if (cb.checked) {
+                if (!selectedGroups.includes(g)) selectedGroups.push(g);
+            } else {
+                selectedGroups = selectedGroups.filter(item => item !== g);
+            }
+            // Якщо вручну відмітили абсолютно всі групи — скидаємо у режим "Всі"
+            if (selectedGroups.length === groups.length) {
+                selectedGroups = [];
+            }
+            localStorage.setItem('selectedGroups', JSON.stringify(selectedGroups));
+            syncCheckboxes(groups);
+            applyGroupHighlight();
+        });
+
+        const dot = document.createElement('span');
+        dot.className = 'group-dot';
+        dot.style.backgroundColor = getGroupColor(g);
+
+        const text = document.createElement('span');
+        text.textContent = `Група ${g}`;
+
+        label.appendChild(cb);
+        label.appendChild(dot);
+        label.appendChild(text);
+        menu.appendChild(label);
+    });
+
+    updateGroupDropdownLabel();
+}
+
+function syncCheckboxes(groups) {
+    const allCheckbox = document.getElementById('groupCheckAll');
+    if (allCheckbox) {
+        allCheckbox.checked = selectedGroups.length === 0;
+    }
+    const itemCheckboxes = document.querySelectorAll('#groupDropdownMenu input[data-group]');
+    itemCheckboxes.forEach(cb => {
+        cb.checked = selectedGroups.includes(cb.dataset.group);
+    });
+    updateGroupDropdownLabel();
+}
+
+function updateGroupDropdownLabel() {
+    const labelEl = document.getElementById('groupDropdownLabel');
+    if (!labelEl) return;
+
+    if (selectedGroups.length === 0) {
+        labelEl.textContent = '👁️ Всі';
+    } else if (selectedGroups.length <= 2) {
+        const sorted = [...selectedGroups].sort();
+        labelEl.textContent = `Групи: ${sorted.join(', ')}`;
+    } else {
+        labelEl.textContent = `Обрано: ${selectedGroups.length} гр.`;
     }
 }
 
-function highlightGroup(selectedGroup) {
-    localStorage.setItem('selectedGroup', selectedGroup);
+function applyGroupHighlight() {
     const chartDiv = document.getElementById('chart');
-    if (!chartDiv.data) return;
+    if (!chartDiv || !chartDiv.data) return;
 
+    const showAll = selectedGroups.length === 0;
     const opacities = chartDiv.data.map(trace => {
         if (trace.name === TOP_AXIS_ANCHOR) return 0;
-        if (selectedGroup === 'all') return 1;
-        if (trace.y && trace.y[0] == selectedGroup) return 1; 
+        if (showAll) return 1;
+        if (trace.y && selectedGroups.includes(String(trace.y[0]))) return 1; 
         return 0.1; 
     });
     Plotly.restyle('chart', { opacity: opacities });
@@ -695,12 +875,10 @@ function getCurrentTotalMinutes() {
 function startClockUpdate() {
     if (window.clockInterval) clearInterval(window.clockInterval);
     
-    // Оновлення кожну хвилину
     window.clockInterval = setInterval(() => {
         const current = getCurrentTotalMinutes();
         const timeStr = formatTime(current % 1440);
         
-        // 1. Оновлюємо лінію часу на графіку
         const chartDiv = document.getElementById('chart');
         if (chartDiv && chartDiv.layout && chartDiv.layout.shapes) {
             const lastShapeIndex = chartDiv.layout.shapes.length - 1;
@@ -713,10 +891,9 @@ function startClockUpdate() {
             Plotly.relayout("chart", update).catch(() => {});
         }
         
-        // 2. Оновлюємо статистику (лічильник)
         updateStatsCounter();
         
-    }, 60000); // 60 секунд
+    }, 60000);
 }
 
 loadPowerData();
